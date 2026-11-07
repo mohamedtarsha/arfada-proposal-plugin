@@ -6,6 +6,14 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.1.1] — 2026-11-07
+
+### Changed
+- Greeting updated: "ARFADA Proposal Assistant v0.1.1 — ready for TOR analysis."
+- Version bump proof: confirms GitHub distribution update flow works end-to-end.
+
+---
+
 ## [0.1.0] — 2026-11-07
 
 ### Added
