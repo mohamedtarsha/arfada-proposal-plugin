@@ -114,6 +114,20 @@ def make_en_docx(path: Path) -> None:
 
 
 def make_ar_docx(path: Path) -> None:
+    """Comprehensive Arabic TOR fixture for Phase 1.1 testing.
+
+    Covers:
+    - Background sentences (يهدف / تم) → NOT requirements
+    - Mandatory BIDDER obligations (يجب, يُطلب, على الاستشاري)
+    - CLIENT responsibilities (ستوفر الجهة, ستقوم الجهة)
+    - Fixed values → NOT decisions (30 نوفمبر, 20 صفحة, 10 مقابلات)
+    - Open decisions (حوالي 400, على الأقل 10 سنوات, حسب ما يراه مناسباً)
+    - Arabic prohibition (يجب ألا)
+    - Mixed Arabic-English (KII, TOR, working days, Inception Report)
+    - Deliverables section with timing
+    - Team requirements
+    - Submission requirements
+    """
     from docx import Document
 
     doc = Document()
@@ -128,28 +142,80 @@ def make_ar_docx(path: Path) -> None:
         doc.add_paragraph(text, style="List Bullet")
 
     h("شروط المرجعية", 1)
-    p("التقييم الختامي لبرنامج الصمود في لبنان")
+    p("التقييم الختامي لبرنامج الصمود في لبنان — TOR شامل")
 
+    # 1. Background — should NOT become requirements
     h("1. الخلفية", 1)
     p("تم تنفيذ البرنامج منذ عام 2022 بالتعاون مع WFP في ثلاث محافظات.")
+    p("يهدف البرنامج إلى دعم المجتمعات الهشة عبر التدخلات المتعددة القطاعات.")
+    p("تشمل المحافظات المستهدفة بعلبك والشمال والجنوب.")
 
+    # 2. Objectives — informational, should NOT be requirements
     h("2. الأهداف", 1)
     p("يهدف هذا التقييم إلى قياس مدى الصلة والفعالية والكفاءة والاستدامة للبرنامج.")
+    p("يرمي التقييم إلى تقديم توصيات عملية لتحسين البرمجة المستقبلية.")
 
+    # 3. Methodology — BIDDER obligations
     h("3. المنهجية", 1)
     p("يجب على الاستشاري تقديم تصميم تقييم صارم يشمل المكونات الكمية والنوعية.")
+    p("يجب أن تتضمن المنهجية مراجعة شاملة للبيانات الثانوية.")
+    # AT_LEAST → DECISION
     li("يجب إجراء ما لا يقل عن 30 مقابلة مع مخبرين رئيسيين (KIIs).")
-    li("يجب إجراء 6 مجموعات نقاش بؤرية (FGDs) على الأقل.")
-    li("يُطلب إجراء مسح للأسر المعيشية بعينة تضم ما يقارب 400 مستجيب.")
+    li("يُطلب إجراء 6 مجموعات نقاش بؤرية على الأقل.")
+    # APPROX → DECISION
+    li("يُطلب إجراء مسح للأسر بعينة تضم حوالي 400 مستجيب.")
+    # Fixed count — NOT a decision
+    li("يجب إجراء 10 مقابلات مع المخبرين الرئيسيين في كل محافظة.")
+    # Open choice → DECISION
+    p("يمكن للاستشاري اقتراح مناهج إضافية حسب ما يراه مناسباً.")
 
-    h("4. المُخرجات", 1)
-    li("تقرير الانطلاق: خلال 10 أيام عمل من توقيع العقد.")
-    li("مسودة تقرير التقييم: خلال 45 يوم عمل من اكتمال العمل الميداني.")
-    li("التقرير النهائي للتقييم: خلال 15 يوم تقويمي من استلام تعليقات العميل.")
+    # 4. Deliverables — with timing (should be first-class deliverables)
+    h("4. المخرجات", 1)
+    li("يجب على الاستشاري تقديم Inception Report خلال 10 أيام عمل من توقيع العقد.")
+    li("يُطلب تقديم مسودة تقرير التقييم خلال 45 يوم عمل بعد اكتمال العمل الميداني.")
+    li("يجب تقديم التقرير النهائي للتقييم خلال 15 يوماً تقويمياً من استلام تعليقات العميل.")
+    li("يُطلب تقديم عرض تقديمي للنتائج أمام لجنة توجيهية.")
 
-    h("5. متطلبات التقديم", 1)
+    # 5. Team requirements — AT_LEAST for experience → DECISION
+    h("5. فريق التقييم", 1)
+    p("يجب أن يضم الفريق قائداً فريق بخبرة 10 سنوات على الأقل في التقييم.")
+    p("يلتزم الاستشاري بتعيين استشاري وطني متخصص في السياق اللبناني.")
+    li("يُطلب وجود على الأقل اثنين من المعددين المدربين على الاستبيانات.")
+
+    # 6. Submission — fixed deadline → NOT decision
+    h("6. متطلبات التقديم", 1)
     p("يجب تقديم العروض بحلول 30 نوفمبر 2026 الساعة 17:00 بتوقيت بيروت.")
+    # AT_MOST → fixed → NOT decision
     p("يجب ألا يتجاوز العرض التقني 20 صفحة باستثناء الملاحق.")
+    p("يجب تقديم العروض التقنية والمالية بشكل منفصل.")
+    p("يجب أن تكون جميع الوثائق باللغة الإنجليزية.")
+
+    # 7. Ethics — BIDDER obligation
+    h("7. الأخلاقيات وحماية الطفل", 1)
+    p("يلتزم الاستشاري بسياسة ARFADA لحماية الطفل.")
+    p("يجب الحصول على موافقة مستنيرة من جميع المشاركين.")
+
+    # 8. Client responsibilities — should be CLIENT actor
+    h("8. مسؤوليات العميل", 1)
+    p("ستوفر الجهة المتعاقدة جلسات توعوية أمنية قبل بدء العمل الميداني.")
+    p("ستقوم الجهة المتعاقدة بمراجعة تقرير الانطلاق وتقديم التغذية الراجعة.")
+    p("سيوفر العميل البيانات الأولية والوثائق المتعلقة بالبرنامج.")
+
+    # Scoring criteria table
+    h("9. معايير التقييم", 1)
+    table = doc.add_table(rows=4, cols=2)
+    table.style = "Table Grid"
+    headers = ["المعيار", "الوزن"]
+    for i, h_text in enumerate(headers):
+        table.rows[0].cells[i].text = h_text
+    rows_data = [
+        ("النهج التقني والمنهجية", "40%"),
+        ("مؤهلات الفريق وخبرته", "35%"),
+        ("العرض المالي", "25%"),
+    ]
+    for r_idx, (a, b) in enumerate(rows_data, 1):
+        table.rows[r_idx].cells[0].text = a
+        table.rows[r_idx].cells[1].text = b
 
     path.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(path))

@@ -1,4 +1,4 @@
-"""analyze_tor.py — CLI bridge for ARFADA TOR analysis (Phase 1).
+"""analyze_tor.py — CLI bridge for ARFADA TOR analysis (Phase 1 / 1.1).
 
 Usage:
     python scripts/analyze_tor.py <tor_file>  [--output-dir <dir>]
@@ -7,9 +7,14 @@ Runs deterministic PE2-compatible TOR extraction on a local PDF or DOCX file.
 Writes JSON artifacts to <output_dir>/<run_id>/ and prints the directory path
 to stdout (Claude Code skill reads from there).
 
-No Anthropic API key required. All extraction is deterministic Python.
-Claude Code's active session performs any additional semantic interpretation.
+Phase 1.1 additions:
+- Arabic actor classification (_AR_BIDDER_CUES / _AR_CLIENT_CUES)
+- Arabic open-decision detection (_AR_OPEN_CHOICE / _AR_APPROX_QUANT)
+- Arabic fixed-value protection (AT_MOST constructs not flagged as decisions)
+- Language detection heuristic
+- Diagnostics section in tor_analysis.json
 
+No Anthropic API key required. All extraction is deterministic Python.
 Exits 0 on success, non-zero on failure.
 """
 from __future__ import annotations
@@ -50,15 +55,49 @@ _OPEN_CHOICE = re.compile(
 )
 _OPEN_QUANTITY_QUALIFIERS = {"APPROX", "AT_LEAST", "RANGE"}
 
+# Arabic open-choice language (Phase 1.1)
+_AR_OPEN_CHOICE = re.compile(
+    r"(?:حسب\s+ما\s+يراه\s+(?:الاستشاري\s+)?مناسباً?|وفق\s+(?:المنهجية\s+)?المقترحة?|"
+    r"يقترح\s+(?:الاستشاري|مقدم\s+العرض)|حسب\s+الحاجة|عند\s+الاقتضاء|"
+    r"حسب\s+تقديره|وفق\s+تقدير|حسب\s+رأيه)",
+    re.UNICODE,
+)
+# Arabic approximate/open-quantity words (→ human decision)
+_AR_APPROX_QUANT = re.compile(
+    r"(?:حوالي|نحو\b|تقريباً|تقريبي|"
+    r"ما\s+بين\s+\d+\s+و[َ]?\s*\d+|من\s+\d+\s+إلى\s+\d+|"
+    r"على\s+الأقل|لا\s+يقل\s+عن|على\s+أقل\s+تقدير)",
+    re.UNICODE,
+)
+# Arabic AT_MOST — fixed upper bound, NOT a human decision
+_AR_AT_MOST = re.compile(
+    r"(?:لا\s+يتجاوز|لا\s+يزيد\s+عن|على\s+الأكثر|بحد\s+أقصى|في\s+حدود\s+\d)",
+    re.UNICODE,
+)
+
 
 def _is_human_decision(req) -> tuple[bool, str]:
-    """Return (True, note) if this requirement leaves a genuine bidder choice open."""
+    """Return (True, note) if this requirement leaves a genuine bidder choice open.
+    Phase 1.1: Arabic open-choice and approximate-quantity detection added.
+    AT_MOST constructs (لا يتجاوز / AT_MOST) are fixed limits — never flagged.
+    """
     text = req.text or ""
-    # explicit open-choice language
+    # Arabic AT_MOST protection: fixed upper bound is not a decision
+    if _AR_AT_MOST.search(text):
+        return False, ""
+    # Arabic open-choice language
+    m = _AR_OPEN_CHOICE.search(text)
+    if m:
+        return True, f"Arabic open choice: '{m.group(0)}'"
+    # Arabic approximate quantity
+    m = _AR_APPROX_QUANT.search(text)
+    if m:
+        return True, f"Arabic approximate quantity: '{m.group(0)}'"
+    # English open-choice language
     m = _OPEN_CHOICE.search(text)
     if m:
         return True, f"Open choice language: '{m.group(0)}'"
-    # approximate or range quantity with no fixed upper bound
+    # English approximate/open quantity
     for q in parse_quantities(text):
         if q.qualifier in _OPEN_QUANTITY_QUALIFIERS:
             return True, f"Unfixed quantity: '{q.raw}' ({q.qualifier})"
@@ -66,7 +105,7 @@ def _is_human_decision(req) -> tuple[bool, str]:
 
 
 # ---------------------------------------------------------------------------
-# Actor classification (beyond PE2's mandatory/modality)
+# Actor classification (English + Arabic, Phase 1.1)
 # ---------------------------------------------------------------------------
 
 _CLIENT_CUES = re.compile(
@@ -80,16 +119,57 @@ _BIDDER_CUES = re.compile(
     r"team\s+leader|researcher)\s+(?:shall|must|will|is\s+required\s+to|is\s+expected\s+to)\b",
     re.I,
 )
+# Arabic bidder cues (Phase 1.1)
+_AR_BIDDER_CUES = re.compile(
+    r"(?:على\s+الاستشاري|على\s+مقدم\s+العرض|على\s+فريق\s+التقييم|على\s+الشركة|"
+    r"على\s+المتقدم|على\s+المُقيِّم|على\s+المستشار|يلتزم\s+الاستشاري|"
+    r"يتعين\s+على\s+الاستشاري|يقوم\s+الاستشاري)",
+    re.UNICODE,
+)
+# Arabic client cues (Phase 1.1)
+_AR_CLIENT_CUES = re.compile(
+    r"(?:ستوفر\s+الجهة|ستقوم\s+الجهة|سيوفر\s+العميل|ستتولى\s+الجهة|"
+    r"الجهة\s+المتعاقدة\s+ست|سيقوم\s+الممول|ستقوم\s+المنظمة|"
+    r"يتولى\s+الممول|سيتولى\s+العميل|ستراجع\s+الجهة|ستعتمد\s+الجهة)",
+    re.UNICODE,
+)
 
 
 def _actor(req) -> str:
     text = req.text or ""
+    # Arabic checks first (Phase 1.1)
+    if _AR_CLIENT_CUES.search(text):
+        return "CLIENT"
+    if _AR_BIDDER_CUES.search(text):
+        return "BIDDER"
+    # English checks
     if _CLIENT_CUES.search(text):
         return "CLIENT"
     if _BIDDER_CUES.search(text):
         return "BIDDER"
-    # default: mandatory → bidder obligation; non-mandatory → unclear
     return "BIDDER" if req.mandatory else "UNKNOWN"
+
+
+# ---------------------------------------------------------------------------
+# Language detection
+# ---------------------------------------------------------------------------
+
+_AR_CHAR = re.compile(r"[؀-ۿ]")
+
+
+def _detect_language(blocks: list[dict]) -> str:
+    """Heuristic: 'arabic', 'english', or 'mixed' based on character proportion."""
+    all_text = " ".join(b.get("plain_text", "") for b in blocks)
+    total = len(all_text.replace(" ", ""))
+    if total == 0:
+        return "unknown"
+    ar_chars = len(_AR_CHAR.findall(all_text))
+    ratio = ar_chars / total
+    if ratio > 0.4:
+        return "arabic"
+    if ratio > 0.1:
+        return "mixed"
+    return "english"
 
 
 # ---------------------------------------------------------------------------
@@ -113,10 +193,38 @@ def analyze(tor_path: str | Path, output_root: str | Path | None = None) -> dict
     # --- extraction --------------------------------------------------------
     store = file_store(tor_path)
     aid = "analysis_" + run_id
-    did = store.documents(aid)[0]["document_id"]
+    doc = store.documents(aid)[0]
+    did = doc["document_id"]
 
     fields = extract_fields(store, aid)
     reqs = extract_requirements(store, aid, fields)
+
+    # --- diagnostics -------------------------------------------------------
+    all_blocks = store.blocks(did)
+    all_tables = store.tables(did)
+    language = _detect_language(all_blocks)
+    table_cells_total = sum(
+        len(store.cells(t["table_id"])) for t in all_tables
+    )
+    reqs_from_tables = sum(
+        1 for r in reqs
+        if (r.source_locator or "").startswith("tbl") or ":tbl" in (r.source_locator or "")
+    )
+    diagnostics = {
+        "language_detected": language,
+        "total_blocks": len(all_blocks),
+        "heading_blocks": sum(1 for b in all_blocks if b.get("block_type") == "HEADING"),
+        "list_item_blocks": sum(1 for b in all_blocks if b.get("block_type") == "LIST_ITEM"),
+        "table_cell_blocks": sum(1 for b in all_blocks if b.get("block_type") == "TABLE_CELL"),
+        "pdf_tables_found": len(all_tables),
+        "pdf_table_cells": table_cells_total,
+        "pdf_tables_unavailable": bool(
+            getattr(store, "_pdf_tables_unavailable", False)
+        ),
+        "requirements_from_tables": reqs_from_tables,
+        "deliverables_detected": 0,  # filled after structuring
+        "open_decisions_detected": 0,  # filled after enrichment
+    }
 
     # --- enrich requirements -----------------------------------------------
     enriched_reqs: list[dict] = []
@@ -144,8 +252,14 @@ def analyze(tor_path: str | Path, output_root: str | Path | None = None) -> dict
             "decision_note": dec_note,
         })
 
+    # fill decisions count in diagnostics
+    diagnostics["open_decisions_detected"] = sum(
+        1 for r in enriched_reqs if r["is_human_decision"]
+    )
+
     # --- first-class objects from structuring ------------------------------
     deliverables = structuring.deliverables(aid, aid, reqs)
+    diagnostics["deliverables_detected"] = len(deliverables)
     submission = structuring.submission(aid, aid, reqs, fields) if hasattr(structuring, "submission") else []
     team_items = structuring.team(aid, aid, reqs) if hasattr(structuring, "team") else []
     eval_qs = structuring.eval_questions(aid, aid, reqs) if hasattr(structuring, "eval_questions") else []
@@ -199,7 +313,8 @@ def analyze(tor_path: str | Path, output_root: str | Path | None = None) -> dict
         "file_path": str(tor_path),
         "file_name": tor_path.name,
         "analyzed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "plugin_version": "0.2.0",
+        "plugin_version": "0.2.1",
+        "diagnostics": diagnostics,
         "metadata": metadata,
         "summary": summary,
         "requirements": enriched_reqs,

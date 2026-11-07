@@ -401,5 +401,278 @@ class TestAnalyzeScript(unittest.TestCase):
             self.assertGreater(result["summary"]["total_requirements"], 0)
 
 
+# ===========================================================================
+# Phase 1.1 tests: Arabic, PDF tables, deliverable calibration, diagnostics
+# ===========================================================================
+
+class TestArabicExtraction(unittest.TestCase):
+    """Arabic obligation extraction — Phase 1.1."""
+
+    def _get_ar_reqs(self):
+        from engine.tor.adapter import file_store
+        from engine.tor.extractor import extract_fields, extract_requirements
+        store = file_store(AR_DOCX)
+        fields = extract_fields(store, "aid")
+        return extract_requirements(store, "aid", fields)
+
+    def _get_ar_result(self):
+        import tempfile
+        from scripts.analyze_tor import analyze
+        with tempfile.TemporaryDirectory() as tmp:
+            return analyze(AR_DOCX, tmp)
+
+    def test_arabic_requirements_found(self):
+        reqs = self._get_ar_reqs()
+        self.assertGreater(len(reqs), 5, "Arabic TOR should extract multiple requirements")
+
+    def test_arabic_majority_mandatory(self):
+        reqs = self._get_ar_reqs()
+        mandatory = [r for r in reqs if r.mandatory]
+        self.assertGreater(len(mandatory), len(reqs) * 0.5,
+                           "Most Arabic requirements should be mandatory")
+
+    def test_arabic_background_not_extracted(self):
+        """يهدف / تم sentences must NOT become requirements."""
+        from engine.tor.extractor import _ar_is_background
+        background_texts = [
+            "يهدف البرنامج إلى دعم المجتمعات الهشة عبر التدخلات المتعددة القطاعات.",
+            "تم تنفيذ البرنامج منذ عام 2022 بالتعاون مع WFP.",
+            "يهدف هذا التقييم إلى قياس مدى الصلة والفعالية.",
+        ]
+        for t in background_texts:
+            self.assertTrue(_ar_is_background(t), f"Should be background: {t[:60]}")
+
+    def test_arabic_obligation_recognized_as_non_background(self):
+        """يجب sentences must NOT be filtered as background."""
+        from engine.tor.extractor import _ar_is_background
+        obligation_texts = [
+            "يجب على الاستشاري تقديم تقرير الانطلاق خلال 10 أيام.",
+            "يُطلب إجراء 30 مقابلة مع مخبرين رئيسيين.",
+            "يلتزم الاستشاري بسياسة حماية الطفل.",
+        ]
+        for t in obligation_texts:
+            self.assertFalse(_ar_is_background(t), f"Should NOT be background: {t[:60]}")
+
+    def test_arabic_client_responsibilities_extracted(self):
+        result = self._get_ar_result()
+        client_count = result["summary"]["client_responsibilities"]
+        self.assertGreater(client_count, 0,
+                           "Arabic client responsibility sentences (ستوفر الجهة) must be extracted")
+
+    def test_arabic_client_actor_set_correctly(self):
+        result = self._get_ar_result()
+        client_reqs = [r for r in result["requirements"] if r["actor"] == "CLIENT"]
+        self.assertGreater(len(client_reqs), 0, "Should have CLIENT actor requirements")
+
+    def test_arabic_bidder_actor_set_correctly(self):
+        result = self._get_ar_result()
+        bidder = [r for r in result["requirements"] if r["actor"] == "BIDDER"]
+        self.assertGreater(len(bidder), 5, "Should have multiple BIDDER requirements")
+
+    def test_arabic_human_decisions_detected(self):
+        result = self._get_ar_result()
+        self.assertGreater(result["summary"]["human_decisions"], 0,
+                           "Arabic open quantities (على الأقل / حوالي) should trigger decisions")
+
+    def test_arabic_fixed_deadline_not_decision(self):
+        """يجب تقديم العروض بحلول 30 نوفمبر is a fixed deadline — NOT a decision."""
+        from engine.tor.models import TORRequirement
+        from scripts.analyze_tor import _is_human_decision
+        r = TORRequirement(
+            req_id="x", assignment_id="a", tor_document_id="d",
+            text="يجب تقديم العروض بحلول 30 نوفمبر 2026 الساعة 17:00 بتوقيت بيروت.",
+            category="submission", mandatory=True, modality="MANDATORY",
+            source_section_path="", block_sequence=0, page=None)
+        is_dec, note = _is_human_decision(r)
+        self.assertFalse(is_dec, f"Fixed Arabic deadline must NOT be a decision. Got: {note}")
+
+    def test_arabic_fixed_page_limit_not_decision(self):
+        """يجب ألا يتجاوز 20 صفحة is AT_MOST — NOT a decision."""
+        from engine.tor.models import TORRequirement
+        from scripts.analyze_tor import _is_human_decision
+        r = TORRequirement(
+            req_id="x", assignment_id="a", tor_document_id="d",
+            text="يجب ألا يتجاوز العرض التقني 20 صفحة باستثناء الملاحق.",
+            category="submission", mandatory=True, modality="PROHIBITION",
+            source_section_path="", block_sequence=0, page=None)
+        is_dec, note = _is_human_decision(r)
+        self.assertFalse(is_dec, f"Fixed page limit (AT_MOST) must NOT be a decision. Got: {note}")
+
+    def test_arabic_atleast_is_decision(self):
+        """على الأقل → open quantity → decision."""
+        from engine.tor.models import TORRequirement
+        from scripts.analyze_tor import _is_human_decision
+        r = TORRequirement(
+            req_id="x", assignment_id="a", tor_document_id="d",
+            text="يجب إجراء ما لا يقل عن 30 مقابلة مع مخبرين رئيسيين.",
+            category="methodology", mandatory=True, modality="MANDATORY",
+            source_section_path="", block_sequence=0, page=None)
+        is_dec, note = _is_human_decision(r)
+        self.assertTrue(is_dec, f"'لا يقل عن 30' must be an open decision. Got: {note}")
+
+    def test_arabic_approx_is_decision(self):
+        """حوالي 400 مستجيب → approximate → decision."""
+        from engine.tor.models import TORRequirement
+        from scripts.analyze_tor import _is_human_decision
+        r = TORRequirement(
+            req_id="x", assignment_id="a", tor_document_id="d",
+            text="يُطلب إجراء مسح للأسر بعينة تضم حوالي 400 مستجيب.",
+            category="methodology", mandatory=True, modality="MANDATORY",
+            source_section_path="", block_sequence=0, page=None)
+        is_dec, note = _is_human_decision(r)
+        self.assertTrue(is_dec, f"'حوالي 400' must be an open decision. Got: {note}")
+
+    def test_arabic_open_choice_is_decision(self):
+        """حسب ما يراه مناسباً → open choice → decision."""
+        from engine.tor.models import TORRequirement
+        from scripts.analyze_tor import _is_human_decision
+        r = TORRequirement(
+            req_id="x", assignment_id="a", tor_document_id="d",
+            text="يمكن للاستشاري اقتراح مناهج إضافية حسب ما يراه مناسباً.",
+            category="methodology", mandatory=False, modality="OPTIONAL",
+            source_section_path="", block_sequence=0, page=None)
+        is_dec, note = _is_human_decision(r)
+        self.assertTrue(is_dec, f"'حسب ما يراه مناسباً' must be an open decision. Got: {note}")
+
+    def test_arabic_prohibition_modality(self):
+        """يجب ألا يتجاوز → PROHIBITION modality."""
+        from engine.tor.extractor import _modality
+        text = "يجب ألا يتجاوز العرض التقني 20 صفحة باستثناء الملاحق."
+        mand, modality = _modality(text)
+        self.assertTrue(mand, "Arabic prohibition should still be mandatory=True")
+        self.assertEqual(modality, "PROHIBITION")
+
+    def test_arabic_mandatory_modality(self):
+        """يجب على الاستشاري → MANDATORY."""
+        from engine.tor.extractor import _modality
+        text = "يجب على الاستشاري تقديم تقرير الانطلاق خلال 10 أيام عمل."
+        mand, modality = _modality(text)
+        self.assertTrue(mand)
+        self.assertEqual(modality, "MANDATORY")
+
+    def test_arabic_language_detected(self):
+        result = self._get_ar_result()
+        self.assertEqual(result["diagnostics"]["language_detected"], "arabic")
+
+    def test_arabic_utf8_in_requirements(self):
+        reqs = self._get_ar_reqs()
+        all_text = " ".join(r.text for r in reqs)
+        arabic_chars = [c for c in all_text if "؀" <= c <= "ۿ"]
+        self.assertGreater(len(arabic_chars), 20, "Arabic text must be preserved in requirements")
+
+    def test_mixed_arabic_english_preserved(self):
+        """Mixed text like 'Inception Report خلال 10 أيام' must keep both scripts."""
+        reqs = self._get_ar_reqs()
+        all_text = " ".join(r.text for r in reqs)
+        # Should contain both English technical terms and Arabic
+        has_english = any(c.isascii() and c.isalpha() for c in all_text)
+        has_arabic = any("؀" <= c <= "ۿ" for c in all_text)
+        self.assertTrue(has_english and has_arabic,
+                        "Mixed Arabic-English documents should preserve both scripts")
+
+
+class TestPDFTableExtraction(unittest.TestCase):
+    """PDF table extraction — Phase 1.1."""
+
+    @unittest.skipUnless(EN_PDF.exists(), "PDF fixture not generated")
+    def test_pdf_analysis_completes(self):
+        import tempfile
+        from scripts.analyze_tor import analyze
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze(EN_PDF, tmp)
+            self.assertIn("summary", result)
+
+    @unittest.skipUnless(EN_PDF.exists(), "PDF fixture not generated")
+    def test_pdf_diagnostics_present(self):
+        import tempfile
+        from scripts.analyze_tor import analyze
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze(EN_PDF, tmp)
+            diag = result["diagnostics"]
+            self.assertIn("pdf_tables_found", diag)
+            self.assertIn("pdf_tables_unavailable", diag)
+            self.assertIn("language_detected", diag)
+
+    @unittest.skipUnless(EN_PDF.exists(), "PDF fixture not generated")
+    def test_pdf_requirements_extracted(self):
+        import tempfile
+        from scripts.analyze_tor import analyze
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze(EN_PDF, tmp)
+            self.assertGreater(result["summary"]["total_requirements"], 0)
+
+    def test_pdf_fallback_does_not_raise(self):
+        """FileStore must handle PDF even when pdfplumber is unavailable (fallback)."""
+        import tempfile, shutil, sys
+        from engine.tor.adapter import _extract_pdf_pypdf_text
+        from pathlib import Path
+        if not EN_PDF.exists():
+            self.skipTest("PDF fixture not generated")
+        blocks, _ = _extract_pdf_pypdf_text(EN_PDF)
+        self.assertGreater(len(blocks), 0, "pypdf fallback must extract blocks")
+
+
+class TestDeliverableCalibration(unittest.TestCase):
+    """Deliverable over-production fix — Phase 1.1."""
+
+    def _get_en_deliverables(self):
+        from engine.tor.adapter import file_store
+        from engine.tor.extractor import extract_fields, extract_requirements
+        from engine.tor import structuring
+        store = file_store(EN_DOCX)
+        aid = "aid"
+        fields = extract_fields(store, aid)
+        reqs = extract_requirements(store, aid, fields)
+        return structuring.deliverables(aid, aid, reqs)
+
+    def test_deliverables_have_qualify_reason(self):
+        """Every deliverable must record why it qualified (Phase 1.1 auditability)."""
+        delivs = self._get_en_deliverables()
+        for d in delivs:
+            self.assertIn("qualify_reason", d, "Deliverable missing qualify_reason field")
+            self.assertTrue(d["qualify_reason"], f"qualify_reason must not be empty: {d}")
+
+    def test_deliverable_count_reasonable(self):
+        """Should not over-produce: English fixture has ~4 explicit deliverables."""
+        delivs = self._get_en_deliverables()
+        self.assertLessEqual(len(delivs), 8,
+                             f"Deliverable count {len(delivs)} too high — over-production")
+
+    def test_deliverables_have_provenance(self):
+        delivs = self._get_en_deliverables()
+        for d in delivs:
+            has_prov = d.get("source_locator") or d.get("block_sequence") is not None
+            self.assertTrue(has_prov, f"Deliverable missing provenance: {d.get('name')}")
+
+
+class TestDiagnostics(unittest.TestCase):
+    """Diagnostics in analysis output — Phase 1.1."""
+
+    def _get_result(self, path=None):
+        import tempfile
+        from scripts.analyze_tor import analyze
+        with tempfile.TemporaryDirectory() as tmp:
+            return analyze(path or EN_DOCX, tmp)
+
+    def test_diagnostics_present_in_output(self):
+        result = self._get_result()
+        self.assertIn("diagnostics", result)
+
+    def test_diagnostics_fields_complete(self):
+        diag = self._get_result()["diagnostics"]
+        for field in ["language_detected", "total_blocks", "pdf_tables_found",
+                      "pdf_tables_unavailable", "requirements_from_tables",
+                      "deliverables_detected", "open_decisions_detected"]:
+            self.assertIn(field, diag, f"Diagnostics missing field: {field}")
+
+    def test_english_language_detected(self):
+        result = self._get_result(EN_DOCX)
+        self.assertEqual(result["diagnostics"]["language_detected"], "english")
+
+    def test_arabic_language_detected(self):
+        result = self._get_result(AR_DOCX)
+        self.assertEqual(result["diagnostics"]["language_detected"], "arabic")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

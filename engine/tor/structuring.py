@@ -5,6 +5,14 @@ deliverables, methods, sampling constraints, team requirements, evaluation
 questions, submission requirements, scoring criteria, and defined terms — each
 with provenance carried straight from its source requirement/cell. Deterministic;
 never invents values; preserves numeric qualifiers via `value.parse_quantities`.
+
+Phase 1.1 plugin changes:
+- deliverables(): removed overly broad keywords ("methodology", "tools", "workshop")
+  that caused over-production. First-class deliverables now require EITHER:
+  (a) category == "deliverable", OR
+  (b) an explicit named-output keyword + timing evidence (day/week/date), OR
+  (c) the requirement is in a deliverables/submission section heading.
+  Added `qualify_reason` field for auditability.
 """
 from __future__ import annotations
 
@@ -22,15 +30,32 @@ def _prov(r):
     return (r.source_locator or "", r.block_sequence)
 
 
+# Phase 1.1: removed overly broad keywords to prevent over-production.
+# "methodology" / "tools" / bare "workshop" were matching activity requirements.
+# Only named output artifacts remain. Broad terms require section-or-timing evidence (see below).
 _DELIV_NAMES = [
     ("inception report", "Inception Report"), ("draft report", "Draft Report"),
     ("final report", "Final Report"), ("final assessment report", "Final Report"),
-    ("final study report", "Final Report"), ("dataset", "Dataset"), ("raw data", "Dataset"),
-    ("presentation", "Presentation"), ("power point", "Presentation"), ("powerpoint", "Presentation"),
-    ("validation workshop", "Validation Workshop"), ("workshop", "Workshop"),
-    ("data collection tool", "Tools"), ("tools", "Tools"), ("work plan", "Work Plan"),
-    ("workplan", "Work Plan"), ("methodology", "Methodology Note"),
+    ("final evaluation report", "Final Report"), ("final study report", "Final Report"),
+    ("final assessment", "Final Report"), ("dataset", "Dataset"), ("raw data", "Dataset"),
+    ("presentation of findings", "Presentation"), ("power point", "Presentation"),
+    ("powerpoint", "Presentation"),
+    ("validation workshop report", "Workshop Report"),
+    ("data collection tools", "Data Collection Tools"),
+    ("work plan", "Work Plan"), ("workplan", "Work Plan"),
+    ("methodology note", "Methodology Note"),   # requires explicit "note" suffix
 ]
+# Section headings that signal a deliverable context
+_DELIV_SECTION_CUES = (
+    "deliverable", "output", "product", "result", "المخرجات", "التسليمات",
+)
+# Timing markers that strengthen a deliverable identification
+_HAS_TIMING = re.compile(
+    r"\b(?:within|by|before|after|no\s+later\s+than|deadline|"
+    r"working\s+days?|calendar\s+days?|weeks?|months?)\b|"
+    r"\d+\s*(?:days?|weeks?|months?)",
+    re.IGNORECASE,
+)
 _DAYS = re.compile(r"\b(working\s+days|calendar\s+days)\b", re.I)
 _RELATIVE = [
     (r"after\s+(?:the\s+)?fieldwork|end of (?:the )?data collection", "FIELDWORK_COMPLETION"),
@@ -52,12 +77,35 @@ def _relative_to(low):
     return ""
 
 
+def _deliverable_qualifies(r) -> tuple[bool, str]:
+    """Return (True, reason) only when there is strong evidence this is a first-class deliverable.
+
+    Three valid paths:
+    A) requirement category is explicitly "deliverable"
+    B) text matches a named output keyword + has timing evidence (day/date/deadline)
+    C) requirement comes from a deliverables/outputs section heading
+    """
+    low = r.text.lower()
+    if r.category == "deliverable":
+        return True, "EXPLICIT_CATEGORY"
+    name_match = next((label for k, label in _DELIV_NAMES if k in low), None)
+    section_low = (r.source_section_path or "").lower()
+    in_deliv_section = any(cue in section_low for cue in _DELIV_SECTION_CUES)
+    if in_deliv_section:
+        # any output-looking requirement in a deliverables section qualifies
+        return True, "DELIVERABLE_SECTION"
+    if name_match and _HAS_TIMING.search(r.text):
+        return True, "EXPLICIT_MODAL_OUTPUT"
+    return False, ""
+
+
 def deliverables(analysis_id, aid, reqs):
     out = []
     for r in reqs:
-        low = r.text.lower()
-        if r.category != "deliverable" and not any(k in low for k, _ in _DELIV_NAMES):
+        qualifies, reason = _deliverable_qualifies(r)
+        if not qualifies:
             continue
+        low = r.text.lower()
         name = next((label for k, label in _DELIV_NAMES if k in low), "Deliverable")
         qs = value.parse_quantities(r.text)
         timing = next((q for q in qs if q.kind in ("DURATION", "DATE")), None)
@@ -78,7 +126,7 @@ def deliverables(analysis_id, aid, reqs):
                         contents="", review_condition=("review/approval" if _REVIEW.search(low) else ""),
                         revisions=(rev.group(0) if rev else ""), channel=("email" if "email" in low else ""),
                         mandatory=int(r.mandatory), source_locator=loc, block_sequence=seq,
-                        confidence=r.confidence))
+                        confidence=r.confidence, qualify_reason=reason))
     return out
 
 

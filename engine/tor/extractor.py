@@ -1,4 +1,10 @@
-"""PE2 deterministic TOR extraction (fields + requirements) with PE1 provenance."""
+"""PE2 deterministic TOR extraction (fields + requirements) with PE1 provenance.
+
+Plugin additions (Phase 1.1):
+- Arabic obligation / prohibition / exclusion / background patterns
+- Arabic heading-alias matching fed into _classify()
+- Arabic section detection in _match_field()
+"""
 from __future__ import annotations
 
 import hashlib
@@ -9,19 +15,137 @@ from typing import Optional
 from . import fields as F
 from .models import TORField, TORRequirement
 
+# ---------------------------------------------------------------------------
+# Arabic support (Phase 1.1)
+# ---------------------------------------------------------------------------
+
+# Mandatory obligation cues in Arabic
+_AR_MANDATORY = re.compile(
+    r"(?:يجب(?:\s+أن)?|ينبغي(?:\s+أن)?|يتعين(?:\s+على)?|يلتزم|يلزم|يشترط|يُطلب|مطلوب|لا\s+بد\s+من|"
+    r"على\s+الاستشاري|على\s+مقدم\s+العرض|على\s+الشركة|على\s+المتقدم|على\s+فريق|على\s+المُقيِّم|"
+    r"على\s+المستشار|يتعين\s+على|يلزم\s+الاستشاري|يقوم\s+الاستشاري\s+بـ?)",
+    re.UNICODE,
+)
+
+# Prohibition / negated-obligation cues in Arabic
+_AR_PROHIBITION = re.compile(
+    r"(?:يجب\s+(?:ألا|أن\s+لا)|لا\s+يجوز|يُحظر|يحظر|غير\s+مسموح|لن\s+يتم\s+قبول|"
+    r"لا\s+يمكن\s+قبول|لا\s+يُقبل|ممنوع)",
+    re.UNICODE,
+)
+
+# Explicit-exclusion cues in Arabic (item is not required)
+_AR_EXCLUSION = re.compile(
+    r"(?:غير\s+مطلوب|ليس\s+(?:مطلوباً|مطلوب)|لا\s+(?:يُطلب|يشترط)|لا\s+داعي\s+ل|"
+    r"لا\s+يلزم)",
+    re.UNICODE,
+)
+
+# Optional / soft-should cues in Arabic
+_AR_OPTIONAL = re.compile(
+    r"(?:يمكن(?:\s+للاستشاري)?|قد\s+يكون|من\s+الممكن|بشكل\s+اختياري|اختياري|"
+    r"يُفضَّل|يُستحسن)",
+    re.UNICODE,
+)
+
+# Arabic CLIENT responsibility statements (future tense / agent = contracting body).
+# These don't have "يجب" but describe what the CLIENT will do — they must be extracted
+# so actor classification can mark them CLIENT.
+_AR_CLIENT_RESP = re.compile(
+    r"(?:ستوفر\s+الجهة|ستقوم\s+الجهة|سيوفر\s+العميل|ستتولى\s+الجهة|"
+    r"الجهة\s+المتعاقدة\s+ست|سيقوم\s+الممول|ستقوم\s+المنظمة|"
+    r"ستراجع\s+الجهة|ستعتمد\s+الجهة|سيتولى\s+العميل|"
+    r"سيقدم\s+العميل|ستقدم\s+الجهة)",
+    re.UNICODE,
+)
+
+# Background / informational verbs: sentences STARTING with these describe project
+# context, NOT bidder obligations ("يهدف المشروع إلى دعم..." = "the project aims to support...")
+_AR_BACKGROUND = re.compile(
+    r"^(?:يهدف|تهدف|يركز|تركز|يسعى|تسعى|تم\b|جرى\b|نُفذ|أُنجز|حقق|تحقق|"
+    r"صُمم|يتضمن|يشمل|يتناول|يغطي|تغطي|يهتم|يتعلق|تتعلق|تُعنى|يُعنى)",
+    re.UNICODE,
+)
+
+# Arabic open-choice / discretionary language (→ human decision)
+_AR_OPEN_CHOICE = re.compile(
+    r"(?:حسب\s+ما\s+يراه\s+(?:الاستشاري\s+)?مناسباً?|وفق\s+(?:المنهجية\s+)?المقترحة?|"
+    r"يقترح\s+(?:الاستشاري|مقدم\s+العرض)|حسب\s+الحاجة|عند\s+الاقتضاء|"
+    r"حسب\s+تقديره|وفق\s+تقدير|حسب\s+رأيه)",
+    re.UNICODE,
+)
+
+# Arabic approximate/open-quantity words (→ human decision when unfixed)
+_AR_APPROX_QUANT = re.compile(
+    r"(?:حوالي|نحو\b|تقريباً|تقريبي|ما\s+بين\s+\d+\s+و[َ]?\s*\d+|من\s+\d+\s+إلى\s+\d+|"
+    r"على\s+الأقل|لا\s+يقل\s+عن|على\s+أقل\s+تقدير)",
+    re.UNICODE,
+)
+
+# Arabic AT_MOST (fixed upper bound — NOT a human decision)
+_AR_AT_MOST = re.compile(
+    r"(?:لا\s+يتجاوز|لا\s+يزيد\s+عن|على\s+الأكثر|بحد\s+أقصى|في\s+حدود)",
+    re.UNICODE,
+)
+
+# Arabic heading aliases mapped to field keys (checked before English aliases)
+_AR_HEADING_ALIASES: dict[str, list[str]] = {
+    "background": ["الخلفية", "السياق", "مقدمة", "لمحة عامة", "وصف المشروع", "الوضع الراهن"],
+    "objectives": ["الأهداف", "الغرض", "أهداف التقييم", "الغرض من التقييم", "الأغراض"],
+    "evaluation_questions": ["أسئلة التقييم", "أسئلة البحث", "أسئلة التعلم", "أسئلة رئيسية"],
+    "scope": ["نطاق العمل", "نطاق", "نطاق التقييم", "نطاق المهمة"],
+    "locations": ["المناطق الجغرافية", "الموقع الجغرافي", "مناطق التغطية", "نطاق جغرافي"],
+    "sampling_requirements": ["العينة", "أسلوب أخذ العينة", "متطلبات العينة", "حجم العينة"],
+    "data_collection_methods": ["جمع البيانات", "طرق جمع البيانات", "أساليب البحث", "أدوات جمع البيانات"],
+    "required_methodology": ["المنهجية", "المنهج", "أسلوب العمل", "التصميم المنهجي", "مقاربة التقييم"],
+    "deliverables": ["المخرجات", "التسليمات", "المنتجات المتوقعة", "المخرجات المتوقعة", "النواتج"],
+    "timeline": ["الجدول الزمني", "المدة الزمنية", "الإطار الزمني", "جدول الأعمال", "التواريخ"],
+    "team_requirements": ["فريق التقييم", "الكادر البشري", "متطلبات الفريق", "مؤهلات الفريق", "الخبراء المطلوبون"],
+    "submission_requirements": ["متطلبات التقديم", "تقديم العروض", "إرسال العروض", "طلب العروض"],
+    "ethics_safeguarding": ["الأخلاقيات", "حماية الطفل", "حماية المستفيدين", "الموافقة المستنيرة"],
+    "evaluation_questions": ["معايير التقييم", "أسئلة التقييم"],
+    "scoring_criteria": ["معايير التقييم", "معايير الاختيار", "نظام التقييم"],
+}
+
+
+def _ar_is_background(text: str) -> bool:
+    """True for Arabic sentences describing project context (not bidder obligations)."""
+    t = text.strip()
+    if not t:
+        return False
+    # background verb at sentence start
+    if _AR_BACKGROUND.match(t):
+        return True
+    # contains no Arabic obligation cue whatsoever
+    return False
+
+
+def _match_field_ar(heading: str) -> Optional[str]:
+    """Check Arabic heading aliases (before English)."""
+    h = (heading or "").strip()
+    for fkey, aliases in _AR_HEADING_ALIASES.items():
+        if any(a in h for a in aliases):
+            return fkey
+    return None
+
 
 def _rid(*parts) -> str:
     return "req_" + hashlib.sha1("|".join(str(p) for p in parts).encode()).hexdigest()[:16]
 
 
 def _match_field(heading: str) -> Optional[str]:
-    """First field whose heading alias is a substring of `heading` (priority order)."""
-    h = (heading or "").lower()
+    """First field whose heading alias is a substring of `heading` (priority order).
+    Arabic aliases are checked before English."""
+    h = (heading or "")
     if not h.strip():
         return None
-    for fkey in F.HEADING_ALIASES:                 # dict preserves priority order
+    ar = _match_field_ar(h)
+    if ar:
+        return ar
+    h_lower = h.lower()
+    for fkey in F.HEADING_ALIASES:
         for alias in F.HEADING_ALIASES[fkey]:
-            if alias in h:
+            if alias in h_lower:
                 return fkey
     return None
 
@@ -50,9 +174,24 @@ def is_exclusion(text: str) -> bool:
 
 def _modality(text: str) -> tuple[bool, str]:
     """Default-MANDATORY: TOR requirements are obligations unless explicitly softened or NEGATED.
-    A directly-negated modal ('shall not', 'must not', 'will not') is a PROHIBITION (in force, but
-    NOT a positive obligation to do X). Negated softeners ('not mandatory','not required') are
-    checked BEFORE the bare mandatory cues so they are not swallowed by substring matching (§8)."""
+    Arabic obligation/prohibition/exclusion checked first (Phase 1.1).
+    """
+    # --- Arabic checks (must run before lowercasing destroys Arabic) ---
+    if _AR_EXCLUSION.search(text):
+        return False, "OPTIONAL"
+    if _AR_PROHIBITION.search(text):
+        return True, "PROHIBITION"
+    if _AR_MANDATORY.search(text):
+        # background verb at sentence start → not a bidder obligation
+        if _ar_is_background(text):
+            return False, "OPTIONAL"
+        return True, "MANDATORY"
+    if _AR_CLIENT_RESP.search(text):
+        # client responsibilities are not bidder obligations
+        return False, "OPTIONAL"
+    if _AR_OPTIONAL.search(text):
+        return False, "OPTIONAL"
+    # --- English checks (unchanged PE2 logic) ---
     t = text.lower()
     if _EXCLUSION.search(t) or "not mandatory" in t:
         return False, "OPTIONAL"
@@ -167,9 +306,8 @@ _ELIG_PRED = ("years of experience", "years of relevant experience", "years in b
 
 
 def _classify(text: str, heading: str) -> str:
-    """Category from the nearest requirement-mapped heading, else content cues. Distinctive FIRM
-    eligibility is routed before generic cues (spec §10-13, §25); genuinely contentless fragments
-    get an explicit NEEDS_REVIEW marker rather than a confidently-wrong bucket (spec §11, §28)."""
+    """Category from the nearest requirement-mapped heading, else content cues.
+    Arabic heading aliases checked via _match_field (Phase 1.1)."""
     hk = _match_field(heading or "")
     if hk in F.REQUIREMENT_CATEGORY:
         return F.REQUIREMENT_CATEGORY[hk]
@@ -263,9 +401,16 @@ _WILL_VERB = re.compile(r"\b(?:will|shall|to|is expected to|is required to)\s+(?
 def _is_requirement_sentence(s: str) -> bool:
     if len(s) < 20:
         return False
+    # Arabic obligation sentence (Phase 1.1)
+    if _AR_MANDATORY.search(s) or _AR_PROHIBITION.search(s):
+        if not _ar_is_background(s):
+            return True
+    # Arabic client-responsibility sentence (future tense: ستوفر الجهة / ستقوم الجهة)
+    if _AR_CLIENT_RESP.search(s):
+        return True
     if _has_obligation(s) or bool(_SUBMISSION_PAT.search(s)):
         return True
-    if _WILL_VERB.search(s):            # "the Consultant will submit/obtain/provide ..."
+    if _WILL_VERB.search(s):
         return True
     return any(c in s.lower() for c in F.PRESCRIPTIVE_CUES)
 
@@ -379,6 +524,9 @@ def extract_requirements(store, aid: str, tor_fields: list[TORField] | None = No
                     continue
                 # bare project-activity bullets (no consultant/eval context) are not requirements
                 if _is_project_activity(clean):
+                    continue
+                # Arabic background sentences (يهدف / تم / ...) are not requirements
+                if _ar_is_background(clean):
                     continue
                 units = _atomize(clean)
                 grp = f"g{seq}" if len(units) > 1 else ""

@@ -5,10 +5,12 @@ cells / sections / section_text / assignment) without any SQLite dependency.
 One FileStore instance covers one TOR file for a single analysis run.
 
 DOCX: walks OOXML body in document order (paragraphs + tables interleaved).
-PDF:  extracts text per page via pypdf; heuristically classifies headings and lists.
-Tables: captured from DOCX; not extracted from PDF (text-only for now).
+PDF:  pdfplumber for structured table extraction (Phase 1.1); falls back to pypdf
+      text-only extraction when pdfplumber is unavailable or a table cannot be parsed.
 Page numbers: available for PDF; set to None for DOCX (not easily accessible).
 Arabic / RTL text: preserved as-is (no normalization).
+
+Phase 1.1: PDF table extraction via pdfplumber with graceful fallback.
 """
 from __future__ import annotations
 
@@ -30,9 +32,12 @@ def file_store(file_path: str | Path) -> "FileStore":
         raise FileNotFoundError(f"TOR file not found: {p}")
     ext = p.suffix.lower()
     if ext == ".docx":
-        return FileStore(p, *_extract_docx(p))
+        doc_id, blocks, tables, cells_by_table = _extract_docx(p)
+        return FileStore(p, doc_id, blocks, tables, cells_by_table)
     elif ext == ".pdf":
-        return FileStore(p, *_extract_pdf(p))
+        doc_id, blocks, tables, cells_by_table, unavailable = _extract_pdf(p)
+        return FileStore(p, doc_id, blocks, tables, cells_by_table,
+                         pdf_tables_unavailable=unavailable)
     else:
         raise ValueError(f"Unsupported format '{ext}'. Use .pdf or .docx")
 
@@ -55,6 +60,7 @@ class FileStore:
         blocks: list[dict],
         tables: list[dict],
         cells_by_table: dict[str, list[dict]],
+        pdf_tables_unavailable: bool = False,
     ):
         self._path = file_path
         self._doc_id = doc_id
@@ -62,6 +68,7 @@ class FileStore:
         self._tables = tables
         self._cells_by_table = cells_by_table
         self._sections: Optional[list[dict]] = None  # lazy
+        self._pdf_tables_unavailable = pdf_tables_unavailable
 
     # --- documents ---------------------------------------------------------
 
@@ -239,56 +246,149 @@ _BULLET_LINE = re.compile(r"^[\•\·\◦\▪\▸\►\○\●\–\—\-\*]\s+\S"
 
 
 def _extract_pdf(path: Path):
-    from pypdf import PdfReader
+    """Extract PDF text + tables.
 
-    reader = PdfReader(str(path))
+    Phase 1.1: tries pdfplumber first for structured table extraction;
+    falls back to pypdf text-only when pdfplumber is unavailable or raises.
+    Returns (doc_id, blocks, tables, cells_by_table, unavailable_flag).
+    """
     doc_id = _doc_id(path)
+    # Try pdfplumber for table-aware extraction
+    try:
+        return _extract_pdf_pdfplumber(path, doc_id)
+    except ImportError:
+        pass  # pdfplumber not installed → fall back
+    except Exception:
+        pass  # pdfplumber failed on this file → fall back
+    # Fall back to pypdf text-only
+    blocks, _ = _extract_pdf_pypdf_text(path)
+    return doc_id, blocks, [], {}, True  # unavailable=True
+
+
+def _extract_pdf_pdfplumber(path: Path, doc_id: str):
+    """pdfplumber-based extraction: text + structured tables."""
+    # pdfplumber may be in .mcp_deps/
+    import sys as _sys
+    _mcp = Path(__file__).resolve().parent.parent.parent / ".mcp_deps"
+    if _mcp.exists() and str(_mcp) not in _sys.path:
+        _sys.path.insert(0, str(_mcp))
+    import pdfplumber  # noqa: PLC0415
+
+    blocks: list[dict] = []
+    tables: list[dict] = []
+    cells_by_table: dict[str, list[dict]] = {}
+    seq = 0
+    tbl_seq = 0
+
+    with pdfplumber.open(str(path)) as pdf:
+        for page_num, page in enumerate(pdf.pages, 1):
+            # --- tables first (collect bounding boxes to skip in text) ---
+            table_bboxes = []
+            for tbl in page.find_tables():
+                tbl_id = f"p{page_num}tbl{tbl_seq}"
+                tbl_seq += 1
+                try:
+                    rows = tbl.extract()
+                except Exception:
+                    rows = []
+                if not rows:
+                    continue
+                table_bboxes.append(tbl.bbox)
+                cell_list: list[dict] = []
+                for r_idx, row in enumerate(rows):
+                    for c_idx, cell_text in enumerate(row or []):
+                        ct = (cell_text or "").strip()
+                        if not ct:
+                            continue
+                        locator = f"p{page_num}:tbl{tbl_seq - 1}:r{r_idx}c{c_idx}"
+                        cell_list.append({"text": ct, "row_index": r_idx,
+                                          "col_index": c_idx, "table_id": tbl_id,
+                                          "locator": locator})
+                        blocks.append({"block_type": "TABLE_CELL", "plain_text": ct,
+                                       "sequence": seq,
+                                       "meta_json": json.dumps({"page": page_num, "locator": locator}),
+                                       "table_id": tbl_id})
+                        seq += 1
+                caption = (rows[0][0] or "")[:80] if rows and rows[0] else ""
+                tables.append({"table_id": tbl_id, "caption": caption,
+                               "document_id": doc_id})
+                cells_by_table[tbl_id] = cell_list
+
+            # --- text extraction (excluding table bounding boxes) ---
+            try:
+                if table_bboxes:
+                    # crop out table areas
+                    page_for_text = page
+                    for bbox in table_bboxes:
+                        try:
+                            page_for_text = page_for_text.outside_bbox(bbox)
+                        except Exception:
+                            pass
+                    raw = page_for_text.extract_text() or ""
+                else:
+                    raw = page.extract_text() or ""
+            except Exception:
+                raw = page.extract_text() or ""
+
+            new_blocks, seq = _text_to_blocks(raw, page_num, seq)
+            blocks.extend(new_blocks)
+
+    return doc_id, blocks, tables, cells_by_table, False  # unavailable=False
+
+
+def _extract_pdf_pypdf_text(path: Path):
+    """Pure pypdf text extraction (no tables). Used as fallback."""
+    from pypdf import PdfReader
+    reader = PdfReader(str(path))
     blocks: list[dict] = []
     seq = 0
-
     for page_num, page in enumerate(reader.pages, 1):
         raw = page.extract_text() or ""
-        lines = [ln.rstrip() for ln in raw.splitlines()]
-        para_buf: list[str] = []
+        new_blocks, seq = _text_to_blocks(raw, page_num, seq)
+        blocks.extend(new_blocks)
+    return blocks, seq
 
-        def flush_para(page_n: int):
-            nonlocal seq
-            text = " ".join(para_buf).strip()
-            para_buf.clear()
-            if len(text) < 4:
-                return
-            bt = "PARAGRAPH"
-            if _HEADING_PATTERNS.match(text):
-                bt = "HEADING"
-            elif _BULLET_LINE.match(text):
-                bt = "LIST_ITEM"
-                text = text[2:].lstrip()
-            blocks.append({"block_type": bt, "plain_text": text,
-                           "sequence": seq, "meta_json": json.dumps({"page": page_n})})
+
+def _text_to_blocks(raw: str, page_num: int, seq: int) -> tuple[list[dict], int]:
+    """Convert raw page text into classified blocks. Returns (blocks, new_seq)."""
+    blocks: list[dict] = []
+    lines = [ln.rstrip() for ln in raw.splitlines()]
+    para_buf: list[str] = []
+
+    def flush() -> None:
+        nonlocal seq
+        text = " ".join(para_buf).strip()
+        para_buf.clear()
+        if len(text) < 4:
+            return
+        bt = "HEADING" if _HEADING_PATTERNS.match(text) else "PARAGRAPH"
+        if bt == "PARAGRAPH" and _BULLET_LINE.match(text):
+            bt = "LIST_ITEM"
+            text = text[2:].lstrip()
+        blocks.append({"block_type": bt, "plain_text": text,
+                       "sequence": seq, "meta_json": json.dumps({"page": page_num})})
+        seq += 1
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            flush()
+            continue
+        if _HEADING_PATTERNS.match(stripped):
+            flush()
+            blocks.append({"block_type": "HEADING", "plain_text": stripped,
+                           "sequence": seq, "meta_json": json.dumps({"page": page_num})})
             seq += 1
-
-        for line in lines:
-            stripped = line.strip()
-            if not stripped:
-                flush_para(page_num)
-                continue
-            # Short ALL-CAPS line is likely a heading
-            if _HEADING_PATTERNS.match(stripped):
-                flush_para(page_num)
-                blocks.append({"block_type": "HEADING", "plain_text": stripped,
-                               "sequence": seq, "meta_json": json.dumps({"page": page_num})})
-                seq += 1
-                continue
-            if _BULLET_LINE.match(stripped):
-                flush_para(page_num)
-                blocks.append({"block_type": "LIST_ITEM", "plain_text": stripped[2:].lstrip(),
-                               "sequence": seq, "meta_json": json.dumps({"page": page_num})})
-                seq += 1
-                continue
-            para_buf.append(stripped)
-        flush_para(page_num)
-
-    return doc_id, blocks, [], {}  # PDF: no structured tables
+            continue
+        if _BULLET_LINE.match(stripped):
+            flush()
+            blocks.append({"block_type": "LIST_ITEM", "plain_text": stripped[2:].lstrip(),
+                           "sequence": seq, "meta_json": json.dumps({"page": page_num})})
+            seq += 1
+            continue
+        para_buf.append(stripped)
+    flush()
+    return blocks, seq
 
 
 # ---------------------------------------------------------------------------
