@@ -1,0 +1,55 @@
+# Environment and secrets — NEVER commit these
+.env
+.env.*
+*.key
+*.pem
+*.p12
+credentials.json
+*service-account*.json
+
+# Proposal and TOR data — confidential client material
+tors/
+proposals/
+outputs/
+drafts/
+*.tor
+*.docx
+*.pdf
+*.xlsx
+*.csv
+data/
+
+# Development databases
+*.db
+*.sqlite
+*.duckdb
+db/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.mcp_deps/
+*.egg-info/
+dist/
+build/
+
+# Node / JS (if tooling added later)
+node_modules/
+.npm
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude Code local state
+.claude/settings.local.json

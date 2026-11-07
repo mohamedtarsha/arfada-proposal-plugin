@@ -1,0 +1,21 @@
+ARFADA PROPOSAL PLUGIN
+======================
+
+Copyright (c) 2026 ARFADA. All rights reserved.
+
+This repository is PRIVATE and CONFIDENTIAL.
+
+Distribution is restricted to ARFADA staff with explicit authorization.
+Redistribution, forking, or public sharing of this code or any derived work
+is prohibited without written permission from ARFADA management.
+
+This repository does NOT contain:
+- Client TOR documents
+- Proposal drafts or outputs
+- API keys or credentials
+- Database contents
+- Internal project data
+
+The plugin source code (SKILL.md, plugin.json) is safe to version-control
+and share within the ARFADA team. Confidential material belongs in the
+ARFADA application environment, not in this repository.
