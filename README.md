@@ -1,9 +1,9 @@
 # ARFADA Proposal Plugin
 
-A Claude Code plugin for ARFADA staff that brings structured TOR analysis and
-proposal drafting into Claude Code.
+A Claude Code plugin for ARFADA staff. Brings structured TOR analysis and
+proposal drafting into Claude Code — distributed privately via GitHub.
 
-> **Status:** Phase 0 — plugin shell validated.
+> **Status:** Phase 0.5 — GitHub distribution verified.
 > Proposal engine integration begins in Phase 1.
 
 ---
@@ -19,64 +19,44 @@ proposal drafting into Claude Code.
 
 ---
 
-## Installation
+## Installation (team members)
 
-### Prerequisites
-- [Claude Code](https://claude.ai/code) installed and authenticated
-- Access to the private `arfada-proposal-plugin` GitHub repository
-
-### Install
+Requires: Claude Code + access to `mohamedtarsha/arfada-proposal-plugin` (private)
 
 ```bash
-claude plugin install https://github.com/mohamedtarsha/arfada-proposal-plugin
+# 1. Add the ARFADA marketplace (once per machine)
+claude plugin marketplace add mohamedtarsha/arfada-proposal-plugin
+
+# 2. Install the plugin
+claude plugin install arfada-proposal@arfada
 ```
 
-Or manually (alternative):
-
-```bash
-# Clone the repo somewhere on your machine
-git clone https://github.com/mohamedtarsha/arfada-proposal-plugin.git
-
-# Copy the skill into Claude Code's user skills directory
-# Windows:
-xcopy /E /I "arfada-proposal-plugin\skills\arfada-proposal" "%USERPROFILE%\.claude\skills\arfada-proposal"
-
-# Mac/Linux:
-cp -r arfada-proposal-plugin/skills/arfada-proposal ~/.claude/skills/arfada-proposal
-```
+Then restart Claude Code (or start a new session). The skill is live immediately.
 
 ---
 
 ## Usage
 
-Type in any Claude Code conversation:
-
 ```
 /arfada-proposal
 ```
 
-Claude will respond as ARFADA Proposal Assistant and walk you through the
-available options for the current plugin version.
+Claude will respond as ARFADA Proposal Assistant and walk you through
+the available options for the current plugin version.
 
 ---
 
 ## Updating
 
-### Via plugin command (recommended)
-
 ```bash
-claude plugin update arfada-proposal
+# Pull latest version from GitHub
+claude plugin marketplace update arfada
+
+# Then restart Claude Code or start a new session
 ```
 
-### Manually
-
-```bash
-cd arfada-proposal-plugin
-git pull origin main
-xcopy /E /I /Y "skills\arfada-proposal" "%USERPROFILE%\.claude\skills\arfada-proposal"
-```
-
-Then **restart Claude Code** (or reload: `/reload`).
+> Auto-update is DISABLED by default for private marketplaces.
+> Run the update command manually when a new version is released.
 
 ---
 
@@ -105,12 +85,23 @@ This repository **does not and must not contain**:
 | Google service-account JSON | Live credentials |
 | VPS SSH keys | Infrastructure access |
 
-The `.gitignore` enforces these rules. If you accidentally stage a sensitive
-file, run `git reset HEAD <file>` before committing.
+The `.gitignore` enforces these rules.
+
+---
+
+## Developer reference (manual install fallback)
+
+For development or if CLI install is not available:
+
+```bash
+git clone https://github.com/mohamedtarsha/arfada-proposal-plugin.git
+xcopy /E /I "arfada-proposal-plugin\skills\arfada-proposal" "%USERPROFILE%\.claude\skills\arfada-proposal"
+```
+
+This path is a developer fallback only. The team workflow is the marketplace commands above.
 
 ---
 
 ## Repository
 
-Private. ARFADA staff only.
-See `NOTICE` for redistribution policy.
+Private. ARFADA staff only. See `NOTICE` for redistribution policy.
