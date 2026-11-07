@@ -674,5 +674,239 @@ class TestDiagnostics(unittest.TestCase):
         self.assertEqual(result["diagnostics"]["language_detected"], "arabic")
 
 
+# ===========================================================================
+# Phase 1.2 tests: Decision semantics hardening
+# ===========================================================================
+
+def _make_req(text, category="general", mandatory=True, modality="MANDATORY",
+              section="", locator=""):
+    from engine.tor.models import TORRequirement
+    return TORRequirement(
+        req_id="req_test", assignment_id="a", tor_document_id="d",
+        text=text, category=category, mandatory=mandatory, modality=modality,
+        source_section_path=section, block_sequence=0, page=None,
+        source_locator=locator,
+    )
+
+
+class TestDecisionSemantics(unittest.TestCase):
+    """Phase 1.2: richer decision classification."""
+
+    def _classify(self, text, category="general", mandatory=True, actor="BIDDER"):
+        from engine.tor.decision_model import classify_decision
+        r = _make_req(text, category=category, mandatory=mandatory)
+        return classify_decision(r, actor)
+
+    # --- Qualification constraints (must NOT be decisions) ---
+
+    def test_team_atleast_experience_is_fixed_minimum(self):
+        """'at least 10 years experience' in TEAM = FIXED_MINIMUM, not decision."""
+        dc = self._classify("Team Leader must have at least 10 years of experience.",
+                            category="team")
+        self.assertEqual(dc.decision_type, "FIXED_MINIMUM")
+        self.assertFalse(dc.is_human_decision)
+
+    def test_arabic_team_atleast_experience_is_fixed_minimum(self):
+        """'10 سنوات على الأقل' in TEAM = FIXED_MINIMUM."""
+        dc = self._classify(
+            "يجب أن يمتلك قائد الفريق خبرة لا تقل عن 10 سنوات في التقييم.",
+            category="team")
+        self.assertEqual(dc.decision_type, "FIXED_MINIMUM")
+        self.assertFalse(dc.is_human_decision)
+
+    def test_eligibility_minimum_not_decision(self):
+        """Eligibility minimum = FIXED_MINIMUM."""
+        dc = self._classify("The firm must have completed at least 5 similar assignments.",
+                            category="eligibility")
+        self.assertFalse(dc.is_human_decision)
+
+    # --- Submission / deadline constraints ---
+
+    def test_submission_max_pages_is_fixed_maximum(self):
+        """'must not exceed 20 pages' = FIXED_MAXIMUM."""
+        dc = self._classify("Technical proposal must not exceed 20 pages excluding annexes.",
+                            category="submission")
+        self.assertEqual(dc.decision_type, "FIXED_MAXIMUM")
+        self.assertFalse(dc.is_human_decision)
+
+    def test_submission_deadline_is_fixed_requirement(self):
+        """'submit by 30 November' = FIXED_REQUIREMENT."""
+        dc = self._classify("Proposals must be submitted by 30 November 2026 at 17:00.",
+                            category="submission")
+        self.assertFalse(dc.is_human_decision)
+
+    def test_arabic_page_limit_not_decision(self):
+        """'يجب ألا يتجاوز 20 صفحة' = not decision."""
+        dc = self._classify(
+            "يجب ألا يتجاوز العرض التقني 20 صفحة باستثناء الملاحق.",
+            category="submission")
+        self.assertFalse(dc.is_human_decision)
+
+    def test_arabic_fixed_deadline_not_decision(self):
+        dc = self._classify(
+            "يجب تقديم العروض بحلول 30 نوفمبر 2026 الساعة 17:00.",
+            category="submission")
+        self.assertFalse(dc.is_human_decision)
+
+    # --- Method count bounded decisions ---
+
+    def test_method_minimum_kii_is_bounded_decision(self):
+        """'at least 30 KIIs' = OPEN_PROPOSAL_DECISION with min=30."""
+        dc = self._classify("Conduct at least 30 Key Informant Interviews (KIIs).",
+                            category="methodology")
+        self.assertEqual(dc.decision_type, "OPEN_PROPOSAL_DECISION")
+        self.assertTrue(dc.is_human_decision)
+        self.assertEqual(dc.constraint_type, "AT_LEAST")
+        self.assertAlmostEqual(dc.minimum, 30.0)
+
+    def test_method_minimum_fgd_is_bounded_decision(self):
+        """'at least 6 FGDs' = OPEN_PROPOSAL_DECISION with min=6."""
+        dc = self._classify("A minimum of 6 Focus Group Discussions (FGDs) shall be conducted.",
+                            category="data_collection_methods")
+        self.assertEqual(dc.decision_type, "OPEN_PROPOSAL_DECISION")
+        self.assertTrue(dc.is_human_decision)
+        self.assertAlmostEqual(dc.minimum, 6.0)
+
+    def test_arabic_method_minimum_kii_is_bounded_decision(self):
+        """'ما لا يقل عن 30 KII' = bounded OPEN_PROPOSAL_DECISION."""
+        dc = self._classify(
+            "يجب إجراء ما لا يقل عن 30 مقابلة KII.",
+            category="methodology")
+        self.assertEqual(dc.decision_type, "OPEN_PROPOSAL_DECISION")
+        self.assertTrue(dc.is_human_decision)
+        self.assertAlmostEqual(dc.minimum, 30.0)
+
+    def test_arabic_method_minimum_fgd_is_bounded_decision(self):
+        """'6 مجموعات على الأقل' = bounded decision."""
+        dc = self._classify(
+            "يُطلب إجراء 6 مجموعات نقاش بؤرية على الأقل.",
+            category="methodology")
+        self.assertEqual(dc.decision_type, "OPEN_PROPOSAL_DECISION")
+        self.assertTrue(dc.is_human_decision)
+
+    # --- Range constraint ---
+
+    def test_range_method_count_is_bounded_decision(self):
+        """'6–8 FGDs' = OPEN_PROPOSAL_DECISION with range 6–8."""
+        dc = self._classify("Conduct 6–8 Focus Group Discussions (FGDs).",
+                            category="methodology")
+        self.assertEqual(dc.decision_type, "OPEN_PROPOSAL_DECISION")
+        self.assertEqual(dc.constraint_type, "RANGE")
+        self.assertAlmostEqual(dc.minimum, 6.0)
+        self.assertAlmostEqual(dc.maximum, 8.0)
+
+    # --- Approximate sampling ---
+
+    def test_approx_sampling_is_fixed_minimum(self):
+        """'approximately 400 respondents' = FIXED_MINIMUM (approximate target)."""
+        dc = self._classify(
+            "A household survey with approximately 400 respondents is required.",
+            category="sampling")
+        self.assertEqual(dc.decision_type, "FIXED_MINIMUM")
+        self.assertFalse(dc.is_human_decision)
+
+    def test_arabic_approx_sampling_is_fixed_minimum(self):
+        """'حوالي 400 مستجيب' = FIXED_MINIMUM."""
+        dc = self._classify(
+            "يُطلب إجراء مسح للأسر بعينة تضم حوالي 400 مستجيب.",
+            category="methodology")
+        self.assertFalse(dc.is_human_decision,
+                         "Approximate target must NOT be an open decision")
+
+    # --- Open methodology ---
+
+    def test_explicit_consultant_proposes_is_decision(self):
+        """'methodology to be proposed by consultant' = OPEN_PROPOSAL_DECISION."""
+        dc = self._classify(
+            "The consultant shall propose a detailed evaluation design.",
+            category="methodology")
+        self.assertEqual(dc.decision_type, "OPEN_PROPOSAL_DECISION")
+        self.assertTrue(dc.is_human_decision)
+
+    # --- Deferred decisions ---
+
+    def test_deferred_inception_is_deferred_decision(self):
+        """'to be finalized during inception' = DEFERRED_DECISION."""
+        dc = self._classify(
+            "The sampling framework will be finalized during the inception phase.",
+            category="sampling")
+        self.assertEqual(dc.decision_type, "DEFERRED_DECISION")
+        self.assertTrue(dc.is_human_decision)
+
+    # --- Client responsibility ---
+
+    def test_client_responsibility_never_decision(self):
+        """CLIENT requirements never produce bidder decisions."""
+        dc = self._classify(
+            "The client will provide security briefings before fieldwork.",
+            category="general", actor="CLIENT")
+        self.assertEqual(dc.decision_type, "NO_DECISION")
+        self.assertFalse(dc.is_human_decision)
+
+    # --- Validation ---
+
+    def test_proposed_value_below_minimum_rejected(self):
+        from engine.tor.decision_model import validate_proposed_value, DecisionCandidate
+        dc = DecisionCandidate(
+            decision_id="x", requirement_id="r", decision_type="OPEN_PROPOSAL_DECISION",
+            is_human_decision=True, question="How many?", constraint_type="AT_LEAST",
+            minimum=30.0, maximum=None, fixed_value=None)
+        result = validate_proposed_value(dc, 25.0)
+        self.assertFalse(result["valid"])
+
+    def test_proposed_value_above_minimum_accepted(self):
+        from engine.tor.decision_model import validate_proposed_value, DecisionCandidate
+        dc = DecisionCandidate(
+            decision_id="x", requirement_id="r", decision_type="OPEN_PROPOSAL_DECISION",
+            is_human_decision=True, question="How many?", constraint_type="AT_LEAST",
+            minimum=30.0, maximum=None, fixed_value=None)
+        result = validate_proposed_value(dc, 35.0)
+        self.assertTrue(result["valid"])
+
+    def test_proposed_value_exceeds_maximum_rejected(self):
+        from engine.tor.decision_model import validate_proposed_value, DecisionCandidate
+        dc = DecisionCandidate(
+            decision_id="x", requirement_id="r", decision_type="FIXED_MAXIMUM",
+            is_human_decision=False, question=None, constraint_type="AT_MOST",
+            minimum=None, maximum=20.0, fixed_value=None)
+        result = validate_proposed_value(dc, 25.0)
+        self.assertFalse(result["valid"])
+
+    # --- Output artifact ---
+
+    def test_decision_candidates_json_created(self):
+        import tempfile
+        from scripts.analyze_tor import analyze
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze(EN_DOCX, tmp)
+            out = Path(result["output_dir"])
+            self.assertTrue((out / "decision_candidates.json").exists(),
+                            "decision_candidates.json must be created")
+
+    def test_decision_candidates_json_structure(self):
+        import tempfile, json
+        from scripts.analyze_tor import analyze
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze(EN_DOCX, tmp)
+            out = Path(result["output_dir"])
+            data = json.loads((out / "decision_candidates.json").read_text(encoding="utf-8"))
+            self.assertIn("candidates", data)
+            self.assertIn("proposal_decisions", data)
+            for c in data["candidates"]:
+                self.assertIn("decision_type", c)
+                self.assertIn("is_human_decision", c)
+                self.assertIn("constraint_type", c)
+
+    def test_summary_has_constraint_decision_split(self):
+        import tempfile
+        from scripts.analyze_tor import analyze
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze(EN_DOCX, tmp)
+            s = result["summary"]
+            self.assertIn("proposal_decisions", s)
+            self.assertIn("constraints", s)
+            self.assertIn("deferred_decisions", s)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

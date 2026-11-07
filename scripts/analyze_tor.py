@@ -40,6 +40,10 @@ from engine.tor.extractor import extract_fields, extract_requirements
 from engine.tor import structuring
 from engine.tor.fields import FIELDS, FIELD_LABEL
 from engine.tor.value import parse_quantities
+from engine.tor.decision_model import (
+    classify_decision, validate_proposed_value,
+    DecisionCandidate, _OPEN_TYPES, _CONSTRAINT_TYPES,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -226,15 +230,29 @@ def analyze(tor_path: str | Path, output_root: str | Path | None = None) -> dict
         "open_decisions_detected": 0,  # filled after enrichment
     }
 
-    # --- enrich requirements -----------------------------------------------
+    # --- enrich requirements + classify decisions --------------------------
     enriched_reqs: list[dict] = []
+    decision_candidates: list[DecisionCandidate] = []
+
     for r in reqs:
-        is_dec, dec_note = _is_human_decision(r)
         actor = _actor(r)
-        try:
-            page = json.loads(r.__dict__.get("meta_json") or "{}").get("page")
-        except Exception:
-            page = None
+        # Richer decision classification (Phase 1.2)
+        dc = classify_decision(r, actor)
+        # Narrow fallback: if decision_model says NO_DECISION but old heuristics
+        # catch EXPLICIT OPEN-CHOICE LANGUAGE (not quantity patterns), upgrade.
+        # Quantity patterns (AT_LEAST/APPROX) are intentionally reclassified as
+        # constraints by the new model — do NOT let the old model override them.
+        if not dc.is_human_decision:
+            old_dec, old_note = _is_human_decision(r)
+            if old_dec and ("Open choice" in old_note or "Arabic open choice" in old_note):
+                dc.decision_type = "OPEN_PROPOSAL_DECISION"
+                dc.is_human_decision = True
+                dc.reason = old_note
+                dc.question = old_note
+
+        if dc.decision_type not in ("NO_DECISION",):
+            decision_candidates.append(dc)
+
         enriched_reqs.append({
             "req_id": r.req_id,
             "text": r.text,
@@ -248,8 +266,12 @@ def analyze(tor_path: str | Path, output_root: str | Path | None = None) -> dict
             "confidence": r.confidence,
             "source_locator": r.source_locator,
             "atomic_group": r.atomic_group,
-            "is_human_decision": is_dec,
-            "decision_note": dec_note,
+            "is_human_decision": dc.is_human_decision,
+            "decision_type": dc.decision_type,
+            "decision_note": dc.reason,
+            "constraint_type": dc.constraint_type,
+            "constraint_min": dc.minimum,
+            "constraint_max": dc.maximum,
         })
 
     # fill decisions count in diagnostics
@@ -285,6 +307,21 @@ def analyze(tor_path: str | Path, output_root: str | Path | None = None) -> dict
     client_resp = sum(1 for r in enriched_reqs if r["actor"] == "CLIENT")
     bidder_obl = sum(1 for r in enriched_reqs if r["actor"] == "BIDDER")
 
+    # Constraint / decision breakdown (Phase 1.2)
+    constraint_count = sum(
+        1 for dc in decision_candidates
+        if dc.decision_type in _CONSTRAINT_TYPES and dc.decision_type != "NO_DECISION"
+    )
+    open_decision_count = sum(
+        1 for dc in decision_candidates if dc.decision_type == "OPEN_PROPOSAL_DECISION"
+    )
+    deferred_count = sum(
+        1 for dc in decision_candidates if dc.decision_type == "DEFERRED_DECISION"
+    )
+    optional_choice_count = sum(
+        1 for dc in decision_candidates if dc.decision_type == "OPTIONAL_CHOICE"
+    )
+
     categories: dict[str, int] = {}
     for r in enriched_reqs:
         categories[r["category"]] = categories.get(r["category"], 0) + 1
@@ -294,6 +331,10 @@ def analyze(tor_path: str | Path, output_root: str | Path | None = None) -> dict
         "mandatory": mandatory,
         "optional": optional_,
         "human_decisions": decisions,
+        "proposal_decisions": open_decision_count,
+        "deferred_decisions": deferred_count,
+        "optional_choices": optional_choice_count,
+        "constraints": constraint_count,
         "bidder_obligations": bidder_obl,
         "client_responsibilities": client_resp,
         "deliverables": len(deliverables),
@@ -313,11 +354,17 @@ def analyze(tor_path: str | Path, output_root: str | Path | None = None) -> dict
         "file_path": str(tor_path),
         "file_name": tor_path.name,
         "analyzed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "plugin_version": "0.2.1",
+        "plugin_version": "0.2.2",
         "diagnostics": diagnostics,
         "metadata": metadata,
         "summary": summary,
         "requirements": enriched_reqs,
+        "decision_candidates_summary": {
+            "proposal_decisions": open_decision_count,
+            "deferred": deferred_count,
+            "optional_choices": optional_choice_count,
+            "constraints": constraint_count,
+        },
         "deliverables": deliverables,
         "submission": submission,
         "team": team_items,
@@ -332,6 +379,31 @@ def analyze(tor_path: str | Path, output_root: str | Path | None = None) -> dict
     _write_json(out_dir / "requirements.json", {
         "run_id": run_id, "total": total, "mandatory": mandatory,
         "requirements": enriched_reqs,
+    })
+    # decision_candidates.json — validated candidates for Phase 2 Decision Review
+    _write_json(out_dir / "decision_candidates.json", {
+        "run_id": run_id,
+        "proposal_decisions": open_decision_count,
+        "deferred_decisions": deferred_count,
+        "constraints": constraint_count,
+        "candidates": [
+            {
+                "decision_id": dc.decision_id,
+                "requirement_id": dc.requirement_id,
+                "decision_type": dc.decision_type,
+                "is_human_decision": dc.is_human_decision,
+                "question": dc.question,
+                "constraint_type": dc.constraint_type,
+                "minimum": dc.minimum,
+                "maximum": dc.maximum,
+                "fixed_value": dc.fixed_value,
+                "reason": dc.reason,
+                "source_text": dc.source_text,
+                "category": dc.category,
+                "actor": dc.actor,
+            }
+            for dc in decision_candidates
+        ],
     })
     _write_summary_md(out_dir / "analysis_summary.md", result, tor_path)
 
@@ -377,9 +449,20 @@ def _write_summary_md(path: Path, r: dict, tor_path: Path) -> None:
         f"| Total requirements | **{s['total_requirements']}** |",
         f"| Mandatory | {s['mandatory']} |",
         f"| Optional | {s['optional']} |",
-        f"| Human decisions needed | {s['human_decisions']} |",
         f"| Bidder obligations | {s['bidder_obligations']} |",
         f"| Client responsibilities | {s['client_responsibilities']} |",
+        "",
+        "## Decision & Constraint Analysis",
+        "",
+        f"| Type | Count |",
+        "| --- | --- |",
+        f"| **Proposal decisions requiring review** | **{s['proposal_decisions']}** |",
+        f"| Deferred decisions | {s['deferred_decisions']} |",
+        f"| Optional choices | {s['optional_choices']} |",
+        f"| TOR constraints (not decisions) | {s['constraints']} |",
+        "",
+        "> Proposal decisions = genuine choices the ARFADA team must make for the proposal.",
+        "> Constraints = TOR-fixed values the proposal must respect but cannot change.",
         "",
         "## Extracted Objects",
         "",
@@ -442,13 +525,17 @@ def main(argv=None):
         sys.exit(3)
 
     s = result["summary"]
-    # Machine-readable one-liner for skill parsing:
+    # Machine-readable one-liners for skill parsing:
     print(f"OUTPUT_DIR={result['output_dir']}")
     print(f"RUN_ID={result['run_id']}")
     print(f"REQUIREMENTS={s['total_requirements']}")
     print(f"MANDATORY={s['mandatory']}")
-    print(f"DECISIONS={s['human_decisions']}")
+    print(f"PROPOSAL_DECISIONS={s['proposal_decisions']}")
+    print(f"DEFERRED_DECISIONS={s['deferred_decisions']}")
+    print(f"CONSTRAINTS={s['constraints']}")
     print(f"DELIVERABLES={s['deliverables']}")
+    # backward-compat
+    print(f"DECISIONS={s['human_decisions']}")
     return 0
 
 

@@ -24,14 +24,32 @@ class Quantity:
     extras: dict = field(default_factory=dict)
 
 
-_APPROX = re.compile(r"\b(approx(?:imately)?|around|about|roughly|circa|~)\b", re.I)
-_ATLEAST = re.compile(r"\b(at\s+least|minimum(?:\s+of)?|no\s+less\s+than|\bmin\.?\b|>=|≥)\b", re.I)
-_ATMOST = re.compile(r"\b(at\s+most|maximum(?:\s+of)?|no\s+more\s+than|not\s+exceed(?:ing)?|"
-                     r"up\s+to|\bmax\.?\b|<=|≤)\b", re.I)
+_APPROX = re.compile(
+    r"\b(approx(?:imately)?|around|about|roughly|circa|~)\b"
+    r"|(?:حوالي|نحو\b|تقريباً|تقريبي)",          # Arabic approximate
+    re.I | re.UNICODE,
+)
+_ATLEAST = re.compile(
+    r"\b(at\s+least|minimum(?:\s+of)?|no\s+less\s+than|\bmin\.?\b|>=|≥)\b"
+    r"|(?:على\s+الأقل|لا\s+يقل\s+عن|لا\s+تقل\s+عن|على\s+أقل\s+تقدير|ما\s+لا\s+يقل\s+عن)",
+    re.I | re.UNICODE,
+)
+_ATMOST = re.compile(
+    r"\b(at\s+most|maximum(?:\s+of)?|no\s+more\s+than|not\s+exceed(?:ing)?|"
+    r"up\s+to|\bmax\.?\b|<=|≤)\b"
+    r"|(?:لا\s+يتجاوز|لا\s+يزيد\s+عن|على\s+الأكثر|بحد\s+أقصى)",
+    re.I | re.UNICODE,
+)
 _RANGE = re.compile(r"(\d[\d,]*\.?\d*)\s*(?:-|–|—|to)\s*(\d[\d,]*\.?\d*)")
 # a unit that may trail a range/number ("3-6 months", "10-15 working days")
-_TRAIL_UNIT = re.compile(r"\s*(working\s+days|calendar\s+days|days|weeks|months|years|hours|%|"
-                         r"kiis?|fgds?|idis?|interviews?|respondents?|reports?|participants?)\b", re.I)
+_TRAIL_UNIT = re.compile(
+    r"\s*(working\s+days|calendar\s+days|days|weeks|months|years|hours|%|"
+    r"kiis?|fgds?|idis?|interviews?|respondents?|reports?|participants?|"
+    # Arabic units
+    r"أيام|يوم|أسابيع|أشهر|سنوات|سنة|مقابلة|مقابلات|مجموعة|مجموعات|"
+    r"مستجيب|مستجيبين|مستجيبًا|استمارة|مشارك|مشاركين)\b",
+    re.I | re.UNICODE,
+)
 # deterministic number-words only when directly followed by a countable unit/noun (spec §20)
 _NUMWORD = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
             "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12}

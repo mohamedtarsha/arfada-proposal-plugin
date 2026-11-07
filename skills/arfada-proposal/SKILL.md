@@ -4,13 +4,13 @@ description: >
   ARFADA Proposal Assistant — structured TOR analysis and proposal drafting for
   ARFADA team members. Invoke with /arfada-proposal to analyze a TOR, review
   extracted requirements, check decisions, and prepare for proposal writing.
-version: 0.2.1
+version: 0.2.2
 trigger: /arfada-proposal
 ---
 
 # ARFADA Proposal Assistant
 
-**Plugin version:** 0.2.1
+**Plugin version:** 0.2.2
 **Publisher:** ARFADA
 **Status:** Phase 1 — TOR Analysis active
 

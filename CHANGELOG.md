@@ -6,6 +6,59 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.2.2] — 2026-11-07
+
+### Added — Phase 1.2 Decision Semantics Hardening
+
+**New: `engine/tor/decision_model.py`**
+- `DecisionCandidate` dataclass: decision_id, decision_type, is_human_decision (backward-compatible),
+  question, constraint_type, minimum, maximum, reason, source_text, category, actor
+- `classify_decision(req, actor)` → richer type replacing simple boolean
+- Decision types: FIXED_REQUIREMENT | FIXED_MINIMUM | FIXED_MAXIMUM | FIXED_RANGE |
+  OPEN_PROPOSAL_DECISION | DEFERRED_DECISION | OPTIONAL_CHOICE | NO_DECISION
+- `validate_proposed_value(candidate, proposed)` — constraint enforcement
+- Category-aware rules: TEAM/ELIGIBILITY minimums → FIXED_MINIMUM; SUBMISSION → FIXED_REQUIREMENT
+- Method-count rule: AT_LEAST on method instances (KII, FGD, مقابلة) → bounded OPEN_PROPOSAL_DECISION
+- APPROX in sampling/methodology → FIXED_MINIMUM (approximate target, not open choice)
+- CLIENT actor → NO_DECISION always
+- DEFERRED language → DEFERRED_DECISION
+
+**Arabic quantity patterns in `value.py`:**
+- Arabic AT_LEAST: على الأقل, لا يقل عن, ما لا يقل عن
+- Arabic AT_MOST: لا يتجاوز, لا يزيد عن
+- Arabic APPROX: حوالي, نحو, تقريباً
+- Arabic trail units: مقابلة, مجموعات, مستجيب, etc.
+
+**New artifact: `decision_candidates.json`**
+- Validated candidates for Phase 2 Decision Review
+- Separates constraints from proposal decisions
+- Each candidate has bounded question + constraint bounds
+
+**Summary now shows:**
+- Proposal decisions requiring review (genuine choices)
+- Deferred decisions (to inception phase)
+- TOR constraints (fixed, no choice needed)
+
+**Tests:** 23 new Phase 1.2 tests (89 total)
+
+### Fixed
+- Phase 1.1 false positives eliminated:
+  - "10 سنوات على الأقل" (team leader): was DECISION → now FIXED_MINIMUM ✓
+  - "على الأقل اثنين من المعددين" (enumerators): was DECISION → now FIXED_MINIMUM ✓
+  - "حوالي 400 مستجيب" (approx sample): was DECISION → now FIXED_MINIMUM ✓
+- Decision fallback constrained to explicit open-choice language only
+  (APPROX/AT_LEAST quantity patterns no longer upgrade FIXED_MINIMUM to OPEN_PROPOSAL_DECISION)
+
+### Arabic before/after (Phase 1.1 → 1.2)
+| | 1.1 | 1.2 |
+|---|---|---|
+| Proposal decisions | 5 | **2** |
+| False positives | 2 | **0** |
+| Genuine decisions | 3 | **2** |
+| Constraints | — | **12** |
+
+---
+
 ## [0.2.1] — 2026-11-07
 
 ### Added — Phase 1.1 TOR Hardening
