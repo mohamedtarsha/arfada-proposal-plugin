@@ -2,14 +2,11 @@
   "name": "arfada-proposal",
   "version": "0.1.1",
   "description": "ARFADA Proposal Assistant for structured TOR analysis and proposal generation.",
-  "author": "ARFADA",
+  "author": {
+    "name": "ARFADA"
+  },
   "homepage": "https://github.com/mohamedtarsha/arfada-proposal-plugin",
-  "minClaudeCodeVersion": "1.0.0",
   "skills": [
-    {
-      "name": "arfada-proposal",
-      "path": "skills/arfada-proposal/SKILL.md",
-      "trigger": "/arfada-proposal"
-    }
+    "./skills/arfada-proposal"
   ]
 }

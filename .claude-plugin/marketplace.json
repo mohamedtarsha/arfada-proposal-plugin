@@ -1,0 +1,13 @@
+{
+  "name": "arfada",
+  "owner": {
+    "name": "ARFADA"
+  },
+  "description": "ARFADA Proposal Plugin marketplace.",
+  "plugins": [
+    {
+      "name": "arfada-proposal",
+      "source": "./plugin.json"
+    }
+  ]
+}
