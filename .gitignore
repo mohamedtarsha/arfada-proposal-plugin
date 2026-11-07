@@ -13,11 +13,16 @@ proposals/
 outputs/
 drafts/
 *.tor
-*.docx
-*.pdf
+# Note: synthetic test fixtures (*.docx, *.pdf in tests/fixtures/) are ALLOWED
+# Real TOR documents must NEVER be committed — add them here if accidentally staged:
+# *.docx
+# *.pdf
 *.xlsx
 *.csv
 data/
+
+# TOR analysis output — always local, never committed
+arfada-output/
 
 # Development databases
 *.db

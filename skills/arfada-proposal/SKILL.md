@@ -2,92 +2,213 @@
 name: arfada-proposal
 description: >
   ARFADA Proposal Assistant — structured TOR analysis and proposal drafting for
-  ARFADA team members. Invoke with /arfada-proposal to start a session, check
-  plugin status, or submit a Terms of Reference for analysis.
-version: 0.1.2
+  ARFADA team members. Invoke with /arfada-proposal to analyze a TOR, review
+  extracted requirements, check decisions, and prepare for proposal writing.
+version: 0.2.0
 trigger: /arfada-proposal
 ---
 
 # ARFADA Proposal Assistant
 
-**Plugin version:** 0.1.2
+**Plugin version:** 0.2.0
 **Publisher:** ARFADA
-**Status:** Phase 0 — plugin shell validated
+**Status:** Phase 1 — TOR Analysis active
 
 ---
 
-## Behavior when invoked
-
-When the user invokes `/arfada-proposal`, follow this sequence exactly:
-
-### 1. Identify and greet
+## Menu (when invoked without a TOR file)
 
 Print exactly:
 
 ```
-ARFADA Proposal Assistant v0.1.2 — GitHub update verified.
+ARFADA Proposal Assistant v0.2.0
+
+Available now:
+  1. Analyze TOR  — provide a .pdf or .docx file
+
+Coming later:
+  2. Review Proposal Decisions
+  3. Generate Proposal Draft
+  4. Quality Review
+  5. Export Word
 ```
 
-### 2. Report status
+Then ask:
 
-State clearly:
+> Do you have a TOR file to analyze? Provide the full file path (.pdf or .docx).
 
-> The proposal engine (PE1–PE7: document intelligence, TOR analysis, writing DNA,
-> proposal generation) will be integrated incrementally in future plugin versions.
-> Phase 0 is a validated plugin shell — distribution and versioning are confirmed
-> working. Engine capabilities will be added in Phase 1 and beyond.
+---
 
-### 3. Invite TOR submission
+## TOR Analysis Workflow
 
-Ask:
+### Step 1 — Accept the TOR file
 
-> Do you have a Terms of Reference (TOR) to analyze?
-> You can paste the full text, or provide a file path.
-> I will confirm receipt and queue it for the next phase.
+If the user provides a file path in any form:
+- `/arfada-proposal` followed by a file path
+- A file path given in reply to the menu prompt
+- A file path given directly in the first message
 
-### 4. If the user provides a TOR
+Extract the file path. If it contains spaces and is not quoted, reconstruct it
+from context. Use the path exactly as provided.
 
-Acknowledge receipt:
+Do NOT ask for the path again if already given.
 
-> TOR received — [X words / X characters].
-> Full structured analysis and proposal generation will be available once the
-> proposal engine is connected in Phase 1. I can offer a manual structural
-> review in the meantime if helpful.
+### Step 2 — Run the analysis script
 
-Offer to:
-- Outline expected proposal sections based on the TOR title/objective
-- Note any apparent gaps or requirements in the TOR
-- Prepare metadata (sector, country, donor) for when the engine is live
+Use the Bash tool to run:
 
-Do NOT call any external API or run any code. Respond from your general knowledge
-of proposal writing for international development organizations.
+```bash
+python "<plugin_root>/scripts/analyze_tor.py" "<file_path>"
+```
 
-### 5. If the user asks for the version or status
+Where `<plugin_root>` is the directory containing this plugin (the directory
+containing `scripts/`, `engine/`, `skills/`). Determine it from the location
+of this SKILL.md file: it is two levels up (skills/arfada-proposal/SKILL.md →
+plugin root).
 
-Report:
+The script outputs lines like:
+```
+OUTPUT_DIR=C:\path\to\arfada-output\tor_20261107_010438
+RUN_ID=tor_20261107_010438
+REQUIREMENTS=63
+MANDATORY=48
+DECISIONS=7
+DELIVERABLES=6
+```
 
-> Plugin: arfada-proposal
-> Version: 0.1.0
-> Phase: 0 (shell)
-> Engine: not yet connected
-> Skills active: /arfada-proposal
+Parse these values.
 
-### 6. If the user asks what is coming next
+If the script fails (non-zero exit), report the error clearly and stop.
 
-Explain:
+### Step 3 — Read the analysis summary
 
-> Phase 1 will connect the ARFADA RAG pipeline:
-> - Semantic search over past proposals and reports
-> - K3 intelligence router (structured analytics + semantic retrieval)
-> - Cited paragraph generation
-> - Full TOR-to-proposal draft
-> These will all become available as `/arfada-proposal` subcommands.
+Use the Read tool to read:
+
+```
+<OUTPUT_DIR>/analysis_summary.md
+```
+
+Also read:
+
+```
+<OUTPUT_DIR>/tor_analysis.json
+```
+
+to get the full structured data for follow-up questions.
+
+### Step 4 — Present the analysis
+
+Format and present:
+
+```
+ARFADA TOR Analysis — [file name]
+
+Assignment:     [metadata.assignment.value or NOT_SPECIFIED]
+Client:         [metadata.client.value or NOT_SPECIFIED]
+Country:        [metadata.country.value or NOT_SPECIFIED]
+
+Requirements:
+  Total:                [total_requirements]
+  Mandatory:            [mandatory]
+  Optional:             [optional]
+  Human decisions:      [human_decisions]
+  Bidder obligations:   [bidder_obligations]
+  Client responsibilities: [client_responsibilities]
+
+Extracted Objects:
+  Deliverables:         [deliverables]
+  Timeline items:       [timeline_items]
+  Submission items:     [submission_items]
+  Team requirements:    [team_items]
+  Evaluation questions: [eval_questions]
+  Methodology items:    [methodology_items]
+
+Output: [OUTPUT_DIR]
+```
+
+### Step 5 — List decisions
+
+After the summary, always show:
+
+```
+Decisions Required ([human_decisions]):
+```
+
+Then list each `is_human_decision: true` requirement from requirements.json,
+showing: `[ID excerpt] text — reason`.
+
+If no decisions: state "No open decisions detected."
+
+### Step 6 — Offer drill-down
+
+After the summary and decisions, offer:
+
+```
+You can ask:
+  • "show mandatory requirements"
+  • "show submission requirements"
+  • "show deliverables"
+  • "show team requirements"
+  • "show evaluation questions"
+  • "show [category] requirements"
+  • "show requirement [ID]"
+  • "show client responsibilities"
+  • "export summary"
+```
+
+---
+
+## Drill-Down Responses
+
+For any follow-up request to show a category:
+
+1. Read `<OUTPUT_DIR>/requirements.json` if not already in context.
+2. Filter by category, actor, or decision flag as requested.
+3. Present each matching requirement as:
+   ```
+   [ID] [mandatory/optional] [actor]
+   Text: ...
+   Section: ...
+   ```
+4. For requirement detail by ID: show full text, source section, page (if available),
+   provenance locator, decision flag and note.
+
+---
+
+## Multiple TOR Sessions
+
+If the user provides a new file path in the same session:
+- Run a new analysis.
+- Keep the previous OUTPUT_DIR available if the user asks to compare.
 
 ---
 
 ## Constraints
 
-- Do NOT fabricate proposal text and present it as ARFADA output.
-- Do NOT call external APIs or the ARFADA web app directly.
-- Do NOT reference internal file paths, database contents, or VPS credentials.
-- Identify all outputs clearly as general guidance, not ARFADA-system output.
+- NEVER invent requirement text not in the JSON.
+- NEVER assign a page number not present in the JSON.
+- NEVER claim a requirement is mandatory if the JSON says mandatory=false.
+- Do NOT commit TOR files or output directories to Git.
+- Output directories (arfada-output/) are local only — do not share paths externally.
+- If the user asks to "save" or "export": write to the existing output directory
+  (already created by the script). Do NOT create new output locations.
+- For Arabic TOR: note that the current engine uses English modal patterns —
+  Arabic obligation language detection is limited; a future version will improve this.
+
+---
+
+## Error Handling
+
+**File not found:**
+> File not found at the given path. Please check the path and try again.
+
+**Unsupported format:**
+> Only .pdf and .docx files are supported. Convert the TOR to one of these formats.
+
+**Script error:**
+> Analysis failed: [error message]. Check that python-docx and pypdf are installed
+> in the Python environment used by Claude Code.
+
+**No requirements found:**
+> No requirements were extracted. This may indicate a heavily scanned PDF or an
+> unusual document structure. Try a .docx version if available.

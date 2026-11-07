@@ -1,0 +1,15 @@
+# ARFADA Proposal Plugin — runtime dependencies for TOR analysis (Phase 1).
+# These are SEPARATE from the main ARFADA web application requirements.
+# Install with:
+#   pip install -r requirements_plugin.txt
+#
+# Note: pypdf and python-docx may already be present if the main app is
+# installed. The plugin works with the same Python environment.
+
+# Document parsing
+python-docx>=1.1.0    # DOCX extraction (PE2 engine adapter)
+pypdf>=3.0.0          # PDF extraction (PE2 engine adapter)
+
+# No web framework, no database, no API client required for Phase 1.
+# All TOR analysis is deterministic Python. Claude Code's active session
+# handles all semantic interpretation — no separate ANTHROPIC_API_KEY needed.
