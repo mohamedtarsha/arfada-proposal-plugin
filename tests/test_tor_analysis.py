@@ -908,5 +908,408 @@ class TestDecisionSemantics(unittest.TestCase):
             self.assertIn("deferred_decisions", s)
 
 
+# ===========================================================================
+# Phase 2 tests: Human Decision Review
+# ===========================================================================
+
+class TestDecisionRegisterModel(unittest.TestCase):
+    """Unit tests for engine/tor/register.py."""
+
+    def _make_reg(self, n_decisions: int = 3) -> tuple:
+        """Create a DecisionRegister with n simple open decisions."""
+        import tempfile
+        from scripts.analyze_tor import analyze
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze(EN_DOCX, tmp)
+            run_dir = Path(result["output_dir"])
+            from engine.tor.register import init_register, load_register
+            reg = init_register(run_dir)
+            return reg, run_dir
+
+    def test_init_creates_open_decisions(self):
+        import tempfile
+        from scripts.analyze_tor import analyze
+        from engine.tor.register import init_register
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze(EN_DOCX, tmp)
+            run_dir = Path(result["output_dir"])
+            reg = init_register(run_dir)
+            self.assertGreater(len(reg.decisions), 0)
+            for e in reg.decisions:
+                self.assertEqual(e.decision_status, "OPEN")
+
+    def test_init_only_human_decisions(self):
+        """Register must contain only is_human_decision=True candidates."""
+        import tempfile, json
+        from scripts.analyze_tor import analyze
+        from engine.tor.register import init_register
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze(EN_DOCX, tmp)
+            run_dir = Path(result["output_dir"])
+            reg = init_register(run_dir)
+            cands = json.loads((run_dir / "decision_candidates.json").read_text(encoding="utf-8"))
+            human_count = sum(1 for c in cands["candidates"] if c["is_human_decision"])
+            self.assertEqual(len(reg.decisions), human_count,
+                             "Register should contain exactly the human-decision candidates")
+
+    def test_fixed_constraints_excluded(self):
+        """FIXED_MINIMUM/FIXED_MAXIMUM must not appear in the register."""
+        import tempfile
+        from scripts.analyze_tor import analyze
+        from engine.tor.register import init_register
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze(EN_DOCX, tmp)
+            run_dir = Path(result["output_dir"])
+            reg = init_register(run_dir)
+            for e in reg.decisions:
+                self.assertNotIn(e.decision_type, {"FIXED_MINIMUM", "FIXED_MAXIMUM",
+                                                    "FIXED_REQUIREMENT", "NO_DECISION"},
+                                 f"Fixed constraint must not appear in register: {e.decision_type}")
+
+    def test_set_numeric_minimum_valid(self):
+        """Value above minimum is accepted."""
+        import tempfile
+        from scripts.analyze_tor import analyze
+        from engine.tor.register import init_register, set_decision, save_register, load_register
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze(EN_DOCX, tmp)
+            run_dir = Path(result["output_dir"])
+            reg = init_register(run_dir)
+            # Find a decision with a minimum
+            kii = next((e for e in reg.decisions if e.minimum is not None), None)
+            if kii is None:
+                self.skipTest("No numeric minimum decision found")
+            r = set_decision(reg, kii.decision_id, kii.minimum + 5)
+            self.assertTrue(r["valid"])
+            save_register(reg, run_dir)
+            reg2 = load_register(run_dir)
+            e = next(e for e in reg2.decisions if e.decision_id == kii.decision_id)
+            self.assertEqual(e.decision_status, "RESOLVED")
+            self.assertAlmostEqual(e.selected_value, kii.minimum + 5)
+
+    def test_set_numeric_minimum_invalid(self):
+        """Value below minimum is rejected."""
+        import tempfile
+        from scripts.analyze_tor import analyze
+        from engine.tor.register import init_register, set_decision
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze(EN_DOCX, tmp)
+            run_dir = Path(result["output_dir"])
+            reg = init_register(run_dir)
+            kii = next((e for e in reg.decisions if e.minimum is not None), None)
+            if kii is None:
+                self.skipTest("No numeric minimum decision found")
+            r = set_decision(reg, kii.decision_id, kii.minimum - 10)
+            self.assertFalse(r["valid"])
+            self.assertEqual(kii.decision_status, "OPEN",
+                             "Status must remain OPEN after invalid input")
+
+    def test_set_maximum_violated(self):
+        """Value above maximum is rejected."""
+        from engine.tor.register import DecisionEntry, set_decision, Status
+        entry = DecisionEntry(
+            decision_id="x", requirement_id="r", decision_type="OPEN_PROPOSAL_DECISION",
+            question="?", decision_status=Status.OPEN,
+            selected_value=None, value_type="none",
+            constraint_type="AT_MOST", minimum=None, maximum=20.0,
+            source_text="", source_locator="", category="submission", actor="BIDDER",
+            reason="")
+        from engine.tor.register import DecisionRegister, _now
+        reg = DecisionRegister(schema_version="1", run_id="r", tor_identity="t",
+                               created_at=_now(), updated_at=_now(), status="OPEN",
+                               decisions=[entry])
+        r = set_decision(reg, "x", 25.0)
+        self.assertFalse(r["valid"])
+
+    def test_range_within_accepted(self):
+        """Value within range is accepted."""
+        from engine.tor.register import DecisionEntry, set_decision, Status, DecisionRegister, _now
+        entry = DecisionEntry(
+            decision_id="x", requirement_id="r", decision_type="OPEN_PROPOSAL_DECISION",
+            question="?", decision_status=Status.OPEN, selected_value=None, value_type="none",
+            constraint_type="RANGE", minimum=6.0, maximum=8.0,
+            source_text="", source_locator="", category="methodology", actor="BIDDER", reason="")
+        reg = DecisionRegister(schema_version="1", run_id="r", tor_identity="t",
+                               created_at=_now(), updated_at=_now(), status="OPEN", decisions=[entry])
+        r = set_decision(reg, "x", 7.0)
+        self.assertTrue(r["valid"])
+
+    def test_range_outside_rejected(self):
+        from engine.tor.register import DecisionEntry, set_decision, Status, DecisionRegister, _now
+        entry = DecisionEntry(
+            decision_id="x", requirement_id="r", decision_type="OPEN_PROPOSAL_DECISION",
+            question="?", decision_status=Status.OPEN, selected_value=None, value_type="none",
+            constraint_type="RANGE", minimum=6.0, maximum=8.0,
+            source_text="", source_locator="", category="methodology", actor="BIDDER", reason="")
+        reg = DecisionRegister(schema_version="1", run_id="r", tor_identity="t",
+                               created_at=_now(), updated_at=_now(), status="OPEN", decisions=[entry])
+        r = set_decision(reg, "x", 10.0)
+        self.assertFalse(r["valid"])
+
+    def test_non_numeric_decision_accepted(self):
+        """String values are accepted without numeric validation."""
+        from engine.tor.register import DecisionEntry, set_decision, Status, DecisionRegister, _now
+        entry = DecisionEntry(
+            decision_id="x", requirement_id="r", decision_type="OPEN_PROPOSAL_DECISION",
+            question="What methodology?", decision_status=Status.OPEN, selected_value=None,
+            value_type="none", constraint_type="NONE", minimum=None, maximum=None,
+            source_text="", source_locator="", category="methodology", actor="BIDDER", reason="")
+        reg = DecisionRegister(schema_version="1", run_id="r", tor_identity="t",
+                               created_at=_now(), updated_at=_now(), status="OPEN", decisions=[entry])
+        r = set_decision(reg, "x", "mixed-methods approach combining qualitative and quantitative")
+        self.assertTrue(r["valid"])
+        self.assertEqual(entry.decision_status, "RESOLVED")
+        self.assertEqual(entry.value_type, "string")
+
+    def test_defer_decision(self):
+        from engine.tor.register import DecisionEntry, defer_decision, Status, DecisionRegister, _now
+        entry = DecisionEntry(
+            decision_id="x", requirement_id="r", decision_type="DEFERRED_DECISION",
+            question="?", decision_status=Status.OPEN, selected_value=None, value_type="none",
+            constraint_type="NONE", minimum=None, maximum=None,
+            source_text="", source_locator="", category="sampling", actor="BIDDER", reason="")
+        reg = DecisionRegister(schema_version="1", run_id="r", tor_identity="t",
+                               created_at=_now(), updated_at=_now(), status="OPEN", decisions=[entry])
+        defer_decision(reg, "x", reason="To be agreed at inception phase")
+        self.assertEqual(entry.decision_status, "DEFERRED")
+        self.assertEqual(entry.notes, "To be agreed at inception phase")
+
+    def test_unresolved_status(self):
+        from engine.tor.register import DecisionEntry, unresolve_decision, Status, DecisionRegister, _now
+        entry = DecisionEntry(
+            decision_id="x", requirement_id="r", decision_type="OPEN_PROPOSAL_DECISION",
+            question="?", decision_status=Status.OPEN, selected_value=None, value_type="none",
+            constraint_type="NONE", minimum=None, maximum=None,
+            source_text="", source_locator="", category="methodology", actor="BIDDER", reason="")
+        reg = DecisionRegister(schema_version="1", run_id="r", tor_identity="t",
+                               created_at=_now(), updated_at=_now(), status="OPEN", decisions=[entry])
+        unresolve_decision(reg, "x", notes="Team not yet nominated")
+        self.assertEqual(entry.decision_status, "UNRESOLVED")
+        self.assertNotEqual(entry.decision_status, "RESOLVED")
+
+    def test_skip_status(self):
+        from engine.tor.register import DecisionEntry, skip_decision, Status, DecisionRegister, _now
+        entry = DecisionEntry(
+            decision_id="x", requirement_id="r", decision_type="OPEN_PROPOSAL_DECISION",
+            question="?", decision_status=Status.OPEN, selected_value=None, value_type="none",
+            constraint_type="NONE", minimum=None, maximum=None,
+            source_text="", source_locator="", category="methodology", actor="BIDDER", reason="")
+        reg = DecisionRegister(schema_version="1", run_id="r", tor_identity="t",
+                               created_at=_now(), updated_at=_now(), status="OPEN", decisions=[entry])
+        skip_decision(reg, "x")
+        self.assertEqual(entry.decision_status, "SKIPPED")
+        self.assertNotEqual(entry.decision_status, "RESOLVED")
+
+    def test_recommendation_not_auto_resolved(self):
+        """Recommendation must stay in RECOMMENDATION status until approved."""
+        from engine.tor.register import (DecisionEntry, set_recommendation, Status,
+                                         DecisionRegister, _now)
+        entry = DecisionEntry(
+            decision_id="x", requirement_id="r", decision_type="OPEN_PROPOSAL_DECISION",
+            question="?", decision_status=Status.OPEN, selected_value=None, value_type="none",
+            constraint_type="AT_LEAST", minimum=30.0, maximum=None,
+            source_text="", source_locator="", category="methodology", actor="BIDDER", reason="")
+        reg = DecisionRegister(schema_version="1", run_id="r", tor_identity="t",
+                               created_at=_now(), updated_at=_now(), status="OPEN", decisions=[entry])
+        set_recommendation(reg, "x", 35)
+        self.assertEqual(entry.decision_status, "RECOMMENDATION")
+        self.assertNotEqual(entry.decision_status, "RESOLVED")
+        self.assertEqual(entry.recommendation, 35)
+
+    def test_approve_recommendation(self):
+        from engine.tor.register import (DecisionEntry, set_recommendation,
+                                         approve_recommendation, Status, DecisionRegister, _now)
+        entry = DecisionEntry(
+            decision_id="x", requirement_id="r", decision_type="OPEN_PROPOSAL_DECISION",
+            question="?", decision_status=Status.OPEN, selected_value=None, value_type="none",
+            constraint_type="AT_LEAST", minimum=30.0, maximum=None,
+            source_text="", source_locator="", category="methodology", actor="BIDDER", reason="")
+        reg = DecisionRegister(schema_version="1", run_id="r", tor_identity="t",
+                               created_at=_now(), updated_at=_now(), status="OPEN", decisions=[entry])
+        set_recommendation(reg, "x", 35)
+        result = approve_recommendation(reg, "x")
+        self.assertTrue(result["valid"])
+        self.assertEqual(entry.decision_status, "RESOLVED")
+        self.assertEqual(entry.selected_value, 35)
+
+    def test_clear_resets_to_open(self):
+        from engine.tor.register import (DecisionEntry, set_decision, clear_decision,
+                                         Status, DecisionRegister, _now)
+        entry = DecisionEntry(
+            decision_id="x", requirement_id="r", decision_type="OPEN_PROPOSAL_DECISION",
+            question="?", decision_status=Status.OPEN, selected_value=None, value_type="none",
+            constraint_type="NONE", minimum=None, maximum=None,
+            source_text="", source_locator="", category="methodology", actor="BIDDER", reason="")
+        reg = DecisionRegister(schema_version="1", run_id="r", tor_identity="t",
+                               created_at=_now(), updated_at=_now(), status="OPEN", decisions=[entry])
+        set_decision(reg, "x", "mixed methods")
+        self.assertEqual(entry.decision_status, "RESOLVED")
+        clear_decision(reg, "x")
+        self.assertEqual(entry.decision_status, "OPEN")
+        self.assertIsNone(entry.selected_value)
+
+    def test_atomic_write_produces_valid_json(self):
+        """Atomic save must produce valid JSON (temp-file → rename)."""
+        import tempfile
+        from scripts.analyze_tor import analyze
+        from engine.tor.register import init_register, load_register, save_register
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze(EN_DOCX, tmp)
+            run_dir = Path(result["output_dir"])
+            reg = init_register(run_dir)
+            save_register(reg, run_dir)
+            reg2 = load_register(run_dir)
+            self.assertEqual(reg.run_id, reg2.run_id)
+            self.assertEqual(len(reg.decisions), len(reg2.decisions))
+
+    def test_resume_continues_from_open(self):
+        """After resolving some decisions, next() returns first open one."""
+        import tempfile
+        from scripts.analyze_tor import analyze
+        from engine.tor.register import init_register, set_decision, next_open, Status
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze(EN_DOCX, tmp)
+            run_dir = Path(result["output_dir"])
+            reg = init_register(run_dir)
+            if len(reg.decisions) < 2:
+                self.skipTest("Need at least 2 decisions")
+            first = reg.decisions[0]
+            set_decision(reg, first.decision_id, "methodology approach")
+            nxt = next_open(reg)
+            self.assertIsNotNone(nxt)
+            self.assertNotEqual(nxt.decision_id, first.decision_id)
+            self.assertEqual(nxt.decision_status, "OPEN")
+
+    def test_arabic_utf8_in_register(self):
+        """Arabic source text preserved in register JSON."""
+        import tempfile, json
+        from scripts.analyze_tor import analyze
+        from engine.tor.register import init_register, save_register
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze(AR_DOCX, tmp)
+            run_dir = Path(result["output_dir"])
+            if result["summary"]["proposal_decisions"] == 0:
+                self.skipTest("Arabic TOR has no proposal decisions")
+            reg = init_register(run_dir)
+            save_register(reg, run_dir)
+            raw = (run_dir / "decision_register.json").read_text(encoding="utf-8")
+            arabic_chars = [c for c in raw if "؀" <= c <= "ۿ"]
+            self.assertGreater(len(arabic_chars), 5,
+                               "Arabic text must be preserved in decision_register.json")
+
+    def test_decision_register_json_created_in_output(self):
+        """decision_register.json must appear in the run directory."""
+        import tempfile
+        from scripts.analyze_tor import analyze
+        from engine.tor.register import init_register
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze(EN_DOCX, tmp)
+            run_dir = Path(result["output_dir"])
+            init_register(run_dir)
+            self.assertTrue((run_dir / "decision_register.json").exists())
+
+    def test_summary_counts_correct(self):
+        """Summary counts match actual decision statuses."""
+        import tempfile
+        from scripts.analyze_tor import analyze
+        from engine.tor.register import (init_register, set_decision, defer_decision,
+                                         skip_decision, get_summary)
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze(EN_DOCX, tmp)
+            run_dir = Path(result["output_dir"])
+            reg = init_register(run_dir)
+            if len(reg.decisions) < 3:
+                self.skipTest("Need at least 3 decisions")
+            set_decision(reg, reg.decisions[0].decision_id, "methodology")
+            defer_decision(reg, reg.decisions[1].decision_id, "defer to inception")
+            skip_decision(reg, reg.decisions[2].decision_id)
+            s = get_summary(reg)
+            self.assertEqual(s["resolved"], 1)
+            self.assertEqual(s["deferred"], 1)
+            self.assertEqual(s["skipped"], 1)
+
+
+class TestDecisionRegisterCLI(unittest.TestCase):
+    """CLI bridge tests for scripts/decision_register.py."""
+
+    def _init_run(self, tmp):
+        from scripts.analyze_tor import analyze
+        result = analyze(EN_DOCX, tmp)
+        run_dir = Path(result["output_dir"])
+        import subprocess, json
+        r = subprocess.run(["python", "scripts/decision_register.py", "init", str(run_dir)],
+                          capture_output=True, cwd=str(_ROOT))
+        data = json.loads(r.stdout.decode("utf-8"))
+        return run_dir, data
+
+    def test_cli_init(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir, data = self._init_run(tmp)
+            self.assertEqual(data["status"], "ok")
+            self.assertGreater(data["register_summary"]["total_decisions"], 0)
+
+    def test_cli_set_valid(self):
+        import tempfile, subprocess, json
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir, _ = self._init_run(tmp)
+            r = subprocess.run(["python", "scripts/decision_register.py", "next", str(run_dir)],
+                               capture_output=True, cwd=str(_ROOT))
+            d = json.loads(r.stdout.decode("utf-8"))
+            dec_id = d["decision"]["decision_id"]
+            min_val = d["decision"]["minimum"]
+
+            value = str(int(min_val) + 5) if min_val is not None else '"test approach"'
+            r2 = subprocess.run(["python", "scripts/decision_register.py", "set",
+                                  str(run_dir), dec_id, value],
+                                capture_output=True, cwd=str(_ROOT))
+            self.assertEqual(r2.returncode, 0)
+
+    def test_cli_set_invalid_below_min(self):
+        import tempfile, subprocess, json
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir, _ = self._init_run(tmp)
+            # Find a decision that actually carries a numeric minimum (via show).
+            r = subprocess.run(["python", "scripts/decision_register.py", "show", str(run_dir)],
+                               capture_output=True, cwd=str(_ROOT))
+            data = json.loads(r.stdout.decode("utf-8"))
+            with_min = [d for d in data["decisions"] if d.get("minimum") is not None]
+            if not with_min:
+                self.skipTest("No numeric-minimum decision in this fixture")
+            dec = with_min[0]
+            r2 = subprocess.run(["python", "scripts/decision_register.py", "set",
+                                  str(run_dir), dec["decision_id"],
+                                  str(int(dec["minimum"]) - 10)],
+                                capture_output=True, cwd=str(_ROOT))
+            self.assertEqual(r2.returncode, 4,
+                             "Setting a value below TOR minimum must fail with exit code 4")
+
+    def test_cli_defer(self):
+        import tempfile, subprocess, json
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir, _ = self._init_run(tmp)
+            r = subprocess.run(["python", "scripts/decision_register.py", "next", str(run_dir)],
+                               capture_output=True, cwd=str(_ROOT))
+            d = json.loads(r.stdout.decode("utf-8"))
+            dec_id = d["decision"]["decision_id"]
+            r2 = subprocess.run(["python", "scripts/decision_register.py", "defer",
+                                  str(run_dir), dec_id, "defer to inception"],
+                                capture_output=True, cwd=str(_ROOT))
+            self.assertEqual(r2.returncode, 0)
+
+    def test_cli_unresolved(self):
+        import tempfile, subprocess, json
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir, _ = self._init_run(tmp)
+            r = subprocess.run(["python", "scripts/decision_register.py", "next", str(run_dir)],
+                               capture_output=True, cwd=str(_ROOT))
+            d = json.loads(r.stdout.decode("utf-8"))
+            dec_id = d["decision"]["decision_id"]
+            r2 = subprocess.run(["python", "scripts/decision_register.py", "unresolved",
+                                  str(run_dir), dec_id],
+                                capture_output=True, cwd=str(_ROOT))
+            self.assertEqual(r2.returncode, 0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -6,6 +6,52 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.3.0] — 2026-11-07
+
+### Added — Phase 2 Human Decision Review
+
+**New: `engine/tor/register.py`**
+- `DecisionRegister` + `DecisionEntry` dataclasses with stable JSON schema (v1)
+- Status model: OPEN | RESOLVED | DEFERRED | SKIPPED | UNRESOLVED | RECOMMENDATION
+- `init_register()` — builds register from decision_candidates.json (human decisions only)
+- `set_decision()` — resolve with value, validated against TOR constraints
+- `defer_decision()` / `skip_decision()` / `unresolve_decision()` / `clear_decision()`
+- `set_recommendation()` / `approve_recommendation()` — Claude suggests, user approves
+- `validate_value()` — rejects values below minimum / above maximum
+- `get_summary()` / `next_open()` — resume support
+- Atomic writes (temp-file → validate → rename); `tor_identity` guards cross-TOR apply
+
+**New: `scripts/decision_register.py`** (CLI bridge)
+- Commands: init | show | get | set | defer | skip | unresolved | clear |
+  recommend | approve | next | summary
+- UTF-8 buffered output (Arabic + special chars safe)
+- Exit code 4 on constraint-validation failure
+
+**New output artifact:** `decision_register.json` (alongside tor_analysis.json,
+requirements.json, decision_candidates.json, analysis_summary.md)
+
+**SKILL.md v0.3.0:** full conversational Decision Review workflow — one decision
+at a time, constraint display, recommendation flow (never auto-resolve), resume,
+edit/clear, Arabic UX.
+
+### Behaviour
+- Only genuine proposal decisions (OPEN_PROPOSAL_DECISION / DEFERRED_DECISION /
+  OPTIONAL_CHOICE) enter the register; FIXED constraints never appear.
+- Numeric choices validated: e.g. "at least 30 KIIs" rejects 25, accepts 35.
+- Range choices validated: "6-8 FGDs" rejects 10, accepts 7.
+- APPROX targets displayed as approximate (not open choice).
+- Recommendations stored as RECOMMENDATION — only RESOLVED on explicit approval.
+- Resumable: re-entering continues from next OPEN decision.
+
+### Validated (live, local)
+- synthetic_en.docx: 4 decisions — numeric validation + text + resume + edit + clear
+- synthetic_ar.docx: 2 decisions — Arabic UTF-8 preserved in register
+- OXFAM Lebanon PDF: 1 decision (APPROX correctly a constraint, not a decision)
+
+### Tests: 114/114 (25 new Phase 2 tests)
+
+---
+
 ## [0.2.2] — 2026-11-07
 
 ### Added — Phase 1.2 Decision Semantics Hardening

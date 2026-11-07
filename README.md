@@ -3,8 +3,8 @@
 A Claude Code plugin for ARFADA staff. Brings structured TOR analysis and
 proposal drafting into Claude Code — distributed privately via GitHub.
 
-> **Status:** Phase 0.5 — GitHub distribution verified.
-> Proposal engine integration begins in Phase 1.
+> **Status:** Phase 2 — TOR Analysis + Human Decision Review.
+> Proposal generation planned for Phase 3.
 
 ---
 
@@ -12,10 +12,18 @@ proposal drafting into Claude Code — distributed privately via GitHub.
 
 | Phase | Version | Capability |
 |-------|---------|-----------|
-| 0 | 0.1.x | Plugin shell, TOR receipt, version reporting |
-| 1 | 0.2.x | RAG search over ARFADA archive |
-| 2 | 0.3.x | Cited paragraph generation |
-| 3 | 1.0.0 | Full TOR-to-proposal draft |
+| 0 | 0.1.x | Plugin shell, GitHub distribution |
+| 1 | 0.2.x | TOR analysis: requirements, metadata, decisions (EN + AR, PDF + DOCX) |
+| 2 | 0.3.x | **Human Decision Review: record proposal choices, validate against TOR** |
+| 3 | 1.0.0 | Full TOR-to-proposal draft generation |
+
+### Current capabilities (v0.3.0)
+
+1. **Analyze TOR** — extract requirements, metadata, constraints, and decision
+   candidates from a `.pdf` or `.docx` TOR (English + Arabic, tables, provenance).
+2. **Review Proposal Decisions** — walk through genuine proposal decisions one by
+   one, record the team's choices (validated against TOR constraints), defer to
+   inception, or leave unresolved. Resumable, editable, fully traceable.
 
 ---
 
@@ -32,6 +40,17 @@ claude plugin install arfada-proposal@arfada
 ```
 
 Then restart Claude Code (or start a new session). The skill is live immediately.
+
+### Python dependencies
+
+TOR analysis needs a few document-parsing libraries (see `requirements_plugin.txt`):
+
+```bash
+pip install python-docx pypdf pdfplumber
+```
+
+No API key required — all analysis is deterministic Python; Claude Code's active
+session handles presentation and conversation.
 
 ---
 

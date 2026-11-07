@@ -190,7 +190,7 @@ def _question_method_bounded(text: str, min_val: Optional[float],
     if min_val is not None:
         return (f"The TOR requires at least {int(min_val)} {unit}s. "
                 f"What exact number should ARFADA propose? "
-                f"(must be ≥ {int(min_val)})")
+                f"(must be >= {int(min_val)})")
     return f"The TOR specifies a method count for {unit}s. What number should be proposed?"
 
 
