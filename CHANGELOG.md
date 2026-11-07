@@ -6,6 +6,14 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.1.2] — 2026-11-07
+
+### Changed
+- Greeting: "ARFADA Proposal Assistant v0.1.2 — GitHub update verified."
+- Proves full GitHub push → `claude plugin marketplace update` → new version active.
+
+---
+
 ## [0.1.1] — 2026-11-07
 
 ### Changed

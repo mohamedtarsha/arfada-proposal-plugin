@@ -4,13 +4,13 @@ description: >
   ARFADA Proposal Assistant — structured TOR analysis and proposal drafting for
   ARFADA team members. Invoke with /arfada-proposal to start a session, check
   plugin status, or submit a Terms of Reference for analysis.
-version: 0.1.1
+version: 0.1.2
 trigger: /arfada-proposal
 ---
 
 # ARFADA Proposal Assistant
 
-**Plugin version:** 0.1.1
+**Plugin version:** 0.1.2
 **Publisher:** ARFADA
 **Status:** Phase 0 — plugin shell validated
 
@@ -25,7 +25,7 @@ When the user invokes `/arfada-proposal`, follow this sequence exactly:
 Print exactly:
 
 ```
-ARFADA Proposal Assistant v0.1.1 — ready for TOR analysis.
+ARFADA Proposal Assistant v0.1.2 — GitHub update verified.
 ```
 
 ### 2. Report status
