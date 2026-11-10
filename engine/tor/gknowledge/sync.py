@@ -171,6 +171,7 @@ def run_sync(*, sources, drive: Optional[DriveLike], sheets: Optional[SheetsLike
     report: dict = {"started_at": _now()}
     state = cache.state()
     state.setdefault("sources", {})
+    state["source_mode"] = "GOOGLE_API"
 
     try:
         if sheets and sources.projects:

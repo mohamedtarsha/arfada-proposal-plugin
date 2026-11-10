@@ -75,7 +75,14 @@ def create_snapshot(run_dir: Path, *, cache: Optional[Cache] = None,
     brand_doc = None
 
     if cache.has_any():
-        source_mode = "LIVE_GOOGLE_OFFLINE_CACHE" if offline else "LIVE_GOOGLE"
+        # Origin recorded by the sync/scan that wrote the cache.
+        origin = cache.source_mode() or "LIVE_GOOGLE"
+        # "offline" only applies to the Google API source — local files are always
+        # local, so a LOCAL_FOLDER snapshot is never "offline".
+        if offline and origin == "GOOGLE_API":
+            source_mode = "GOOGLE_API_OFFLINE_CACHE"
+        else:
+            source_mode = origin
         projects_doc = cache.projects()
         staff_doc = cache.staff()
         company_doc = cache.company()

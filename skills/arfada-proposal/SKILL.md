@@ -4,15 +4,15 @@ description: >
   ARFADA Proposal Assistant — TOR analysis, human decision review, controlled
   draft generation, and professional Word export for ARFADA team members. Invoke
   with /arfada-proposal to analyze a TOR, review decisions, generate, or export.
-version: 0.5.1
+version: 0.5.2
 trigger: /arfada-proposal
 ---
 
 # ARFADA Proposal Assistant
 
-**Plugin version:** 0.5.1
+**Plugin version:** 0.5.2
 **Publisher:** ARFADA
-**Status:** Phase 4.1 — Live Google Knowledge + Professional DOCX active
+**Status:** Phase 4.2 — Local / synced knowledge folder + Professional DOCX active
 
 ---
 
@@ -21,19 +21,19 @@ trigger: /arfada-proposal
 When invoked without context, print:
 
 ```
-ARFADA Proposal Assistant v0.5.1
+ARFADA Proposal Assistant v0.5.2
 
 Available now:
   1. Analyze TOR               — provide a .pdf or .docx file
   2. Review Proposal Decisions — review and record proposal choices
-  3. Refresh ARFADA Knowledge  — sync live data from Google Workspace
+  3. Refresh ARFADA Knowledge  — scan the local ARFADA Knowledge folder
   4. Generate Proposal Draft   — build a TOR-grounded draft section by section
   5. Export Word               — professional DOCX (internal review / client draft)
 
 Coming later:
   6. Final Quality Review
 
-Also: "ARFADA Knowledge Status"
+Also: "Set ARFADA Knowledge Folder", "ARFADA Knowledge Status"
 ```
 
 If a run directory is already in context (from previous analysis), offer the
@@ -41,67 +41,80 @@ relevant next step with `[run: <run_id>]`.
 
 ---
 
-## ARFADA Knowledge (live Google Workspace — local only)
+## ARFADA Knowledge (local / synced folder — PRIMARY, OAuth-free)
 
-ARFADA operational data (Master Tracker, staff CVs, company docs, brand) lives in
-**Google Workspace** and is the live source of truth. The connector runs **locally**
-(OAuth desktop flow) — no VPS, no MCP server, no Anthropic API. The static
-`knowledge/` snapshot is an explicit **STATIC_FALLBACK** only.
+ARFADA operational data lives in a single **local folder** the user picks. It may be
+a plain folder or a **Google Drive for Desktop / OneDrive / Dropbox / network-mounted**
+folder — the plugin only sees a filesystem path and calls **no cloud API**. No OAuth,
+no VPS, no MCP server, no Anthropic API. Recommended layout:
 
-### Connect (one-time, per machine)
-```bash
-python "<plugin_root>/scripts/connect_google.py"
 ```
-Opens the browser for read-only Drive + Sheets consent. Tokens are stored under
-`%USERPROFILE%/.arfada-proposal/` — never in the repo, never printed. Requires a
-desktop-app `client_secret.json` and `arfada_sources.yaml` (see
-`config/arfada_sources.example.yaml`).
+ARFADA Knowledge/
+├── Projects/Master Tracker.xlsx
+├── Staff CVs/<Country>/*.pdf|*.docx
+├── Company/...
+└── Brand/<logo>.png
+```
+
+### Set / show / change the folder
+```bash
+python "<plugin_root>/scripts/knowledge_folder.py" set "C:/Users/<you>/ARFADA Knowledge"
+python "<plugin_root>/scripts/knowledge_folder.py" show
+python "<plugin_root>/scripts/knowledge_folder.py" clear
+```
+Stored under `%USERPROFILE%/.arfada-proposal/` (never in the repo).
+
+### Refresh (incremental, transactional)
+```bash
+python "<plugin_root>/scripts/refresh_knowledge.py"
+```
+Scans the folder: reads `Master Tracker.xlsx` (deterministic metrics), recursively
+indexes CVs (country from subfolder), company docs, and the brand logo. Only new/
+changed files are reprocessed; a failed refresh keeps the previous valid cache.
+Cloud-placeholder files not physically downloaded are reported
+`FILE_NOT_AVAILABLE_LOCALLY` and skipped safely. Example summary:
+```
+Projects: 148  Countries: 9  CVs indexed: 63  Company files: 12
+Logo: found   Updated files: 4   Warnings: 1
+```
 
 ### Status
 ```bash
 python "<plugin_root>/scripts/knowledge_status.py"
 ```
-Shows: Google connected, source_mode (LIVE_GOOGLE / LIVE_GOOGLE_OFFLINE_CACHE /
-STATIC_FALLBACK), last sync, freshness (FRESH <24h / WARNING 1–7d / STALE >7d),
-project+staff counts, and the static fallback version.
+Shows: source_mode (**LOCAL_FOLDER** / GOOGLE_API / STATIC_FALLBACK), knowledge root,
+last refresh, freshness (FRESH <24h / WARNING 1–7d / STALE >7d), project/CV/company
+counts, logo availability, static fallback version.
 
-### Refresh (incremental, transactional)
-```bash
-python "<plugin_root>/scripts/sync_google_knowledge.py"
-```
-Pulls only new/changed Sheet rows + Drive files; a failed sync keeps the previous
-valid cache. Report lists added/updated/unchanged/removed.
+### Source priority
+1. frozen run knowledge snapshot
+2. **LOCAL_FOLDER** (default recommended)
+3. Google API connector (OPTIONAL / ADVANCED — `connect_google.py`; not required)
+4. STATIC_FALLBACK (only when nothing else is configured; never implied as current)
 
-### Staleness policy (before generation)
-Run `knowledge_status.py`. If `freshness` is STALE (> 7 days), tell the user:
-> "ARFADA knowledge was last synchronized X days ago. Refresh before generating?"
-Do not silently use very stale data. If never connected, say:
-> "ARFADA KNOWLEDGE SOURCE: STATIC FALLBACK — recommend connecting Google."
-
-### Offline
-If Google is unreachable but a cache exists, proceed in OFFLINE KNOWLEDGE MODE
-(state the last sync time); the run snapshot records it was created offline.
-
-### Show facts / experience used
-```bash
-python "<plugin_root>/scripts/query_knowledge.py" metrics
-python "<plugin_root>/scripts/query_knowledge.py" search --type EVALUATION --country Lebanon
-```
+### Staleness / offline
+If `freshness` is STALE, ask the user to refresh before generating. Because files are
+local, normal use works offline. If never configured, state:
+> "ARFADA KNOWLEDGE SOURCE: STATIC FALLBACK — set your local ARFADA Knowledge folder."
 
 ### Proposal-time snapshot (automatic, immutable)
 `build_blueprint.py` freezes the relevant knowledge into
 `arfada-output/<run_id>/knowledge_snapshot/` with a manifest (snapshot_id,
-source_mode, google sync times, revisions, plugin_version). That run then uses its
-**frozen** snapshot — Google changes mid-run do NOT leak in. To pull refreshed data
-into an existing run, explicitly re-create the snapshot (force) and regenerate
-affected sections.
+source_mode=LOCAL_FOLDER, Master Tracker file hash + modified time, staff/company
+revisions, plugin_version). That run uses its **frozen** snapshot — changing a file
+afterward does NOT alter an in-flight proposal; only future runs (or an explicit
+re-freeze) see new data. Local filesystem paths are NEVER written into client DOCX.
+
+### Google API connector — optional/advanced
+The OAuth connector (`connect_google.py`, `sync_google_knowledge.py`) still exists but
+is NOT required. Prefer the local folder (works offline, no credentials).
 
 ### Staff (personnel) — suggestions only
 `knowledge.search_staff(country, role, min_years, language)` returns candidate CVs
 (hard qualification constraints filter; soft factors rank). **Suggested ≠ approved.**
-If the TOR needs named staff, present candidates, let the user choose, and record
-the approved `staff_id` in the Decision Register before generation uses that
-person's verified facts. Never invent staff names — use "To be nominated".
+Present candidates, let the user choose, record the approved `staff_id` in the
+Decision Register before generation uses that person's facts. Never invent staff
+names — use "To be nominated".
 
 ---
 

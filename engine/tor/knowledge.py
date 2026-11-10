@@ -89,7 +89,8 @@ class Knowledge:
                 sf = c.staff()
                 if sf:
                     self._live_staff = sf.get("profiles", [])
-                self.source_mode = "LIVE_GOOGLE"
+                # origin recorded by the sync/scan (LOCAL_FOLDER | GOOGLE_API)
+                self.source_mode = c.source_mode() or "LIVE_GOOGLE"
                 return
         except Exception:
             pass

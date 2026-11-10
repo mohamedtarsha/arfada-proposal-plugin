@@ -6,6 +6,49 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.5.2] — 2026-11-10
+
+### Added — Phase 4.2 Local / synced knowledge folder (OAuth-free, PRIMARY source)
+
+A single configurable **local folder** is now the primary ARFADA knowledge source.
+It may be a plain folder or a **Google Drive for Desktop / OneDrive / Dropbox /
+network-mounted** folder — the plugin only sees a filesystem path and calls **no
+cloud API**. No OAuth, no VPS, no MCP, no Anthropic API.
+
+**New package `engine/tor/lknowledge/`:**
+- `local_config.py` — `knowledge_root` get/set/clear (user config dir; `ARFADA_KNOWLEDGE_ROOT` override)
+- `scan.py` — deterministic folder scan → normalized cache:
+  - `Projects/Master Tracker.xlsx` via openpyxl → project records + metrics (Python sums)
+  - `Staff CVs/<Country>/` recursive PDF/DOCX → profiles (country from subfolder; scanned → LOW confidence)
+  - `Company/` document index; `Brand/` logo detection
+  - incremental (path + modifiedTime), transactional (failed scan keeps prior cache)
+  - cloud-placeholder detection → `FILE_NOT_AVAILABLE_LOCALLY` (0-byte / offline attr), skipped safely
+
+**Source priority (spec §3):** frozen snapshot > **LOCAL_FOLDER** > GOOGLE_API (optional) > STATIC_FALLBACK.
+Cache `source_mode` records origin; `knowledge.py`, `snapshot.py`, `knowledge_status.py` honor it.
+Google OAuth connector retained but **OPTIONAL/ADVANCED** — not required for setup or routine use.
+
+**New scripts:** `knowledge_folder.py` (set/show/clear), `refresh_knowledge.py` (local-first,
+Google fallback). `knowledge_status.py` now shows LOCAL_FOLDER + knowledge root.
+
+**Wiring:** `build_blueprint.py` freezes a `source_mode=LOCAL_FOLDER` snapshot (Master
+Tracker file hash + modified time in the manifest); `render_docx.py` embeds the local
+brand logo; local filesystem paths never leak into client DOCX.
+
+### Validated (synthetic ARFADA Knowledge folder, no real data)
+- set folder → refresh → status: LOCAL_FOLDER, 3 projects, 2000 surveys / 65 KII, 2 CVs, logo found
+- xlsx parsing, recursive CV discovery, empty-cell→None, file-hash provenance
+- incremental unchanged/added/removed; transactional bad-root keeps prior cache
+- cloud-placeholder (0-byte) reported unavailable, real CVs still indexed
+- LOCAL_FOLDER snapshot immutable on local file change; manifest revision present
+- end-to-end: local folder → snapshot → generate (live 2000-survey claim accepted) →
+  internal DOCX with embedded local logo; client DOCX leaks no local paths
+- Google is optional (works with Google never configured)
+
+### Tests: 235/235 (23 new Phase 4.2 local-folder tests). No OAuth, no API, no VPS, no MCP.
+
+---
+
 ## [0.5.1] — 2026-11-10
 
 ### Added — Phase 4.1 Live Google Workspace Knowledge Connector (local-only)

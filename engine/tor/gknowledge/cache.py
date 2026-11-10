@@ -93,6 +93,13 @@ class Cache:
         except Exception:
             return None
 
+    def source_mode(self) -> str:
+        """Origin of the current cache: LOCAL_FOLDER | GOOGLE_API | '' (none)."""
+        return self.state().get("source_mode", "") if self.has_any() else ""
+
+    def knowledge_root(self) -> Optional[str]:
+        return self.state().get("knowledge_root")
+
     # --- write ---
     def write_projects(self, projects: list, metrics: dict, source: dict) -> None:
         _atomic_write(self.projects_path, {

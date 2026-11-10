@@ -11,7 +11,10 @@ python-docx>=1.1.0    # DOCX extraction (adapter) + professional DOCX export (Ph
 pypdf>=3.0.0          # PDF text extraction (fallback)
 pdfplumber>=0.11.0    # PDF structured table extraction (Phase 1.1)
 
-# Live Google Workspace knowledge connector (Phase 4.1) — READ-ONLY, local OAuth
+# Local / synced knowledge folder (Phase 4.2) — PRIMARY source, no OAuth/API
+openpyxl>=3.1.0       # read Master Tracker.xlsx
+
+# Google Workspace connector (Phase 4.1) — OPTIONAL/ADVANCED, read-only, local OAuth
 google-api-python-client>=2.100.0   # Drive + Sheets v3/v4
 google-auth>=2.30.0                 # credentials
 google-auth-oauthlib>=1.2.0         # desktop OAuth flow

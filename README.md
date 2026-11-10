@@ -3,19 +3,21 @@
 A Claude Code plugin for ARFADA staff. Brings structured TOR analysis and
 proposal drafting into Claude Code — distributed privately via GitHub.
 
-> **Status:** Phase 4.1 — TOR Analysis + Decision Review + Controlled Generation +
-> **Live Google Workspace knowledge** + Professional Word export.
+> **Status:** Phase 4.2 — TOR Analysis + Decision Review + Controlled Generation +
+> **Local/synced ARFADA knowledge folder** + Professional Word export.
 > Final quality review planned for a later phase.
 
-### Live ARFADA knowledge (v0.5.1)
+### ARFADA knowledge (v0.5.2) — local folder, OAuth-free
 
 ARFADA operational data (Master Tracker, staff CVs, company docs, brand) is read
-**live from Google Workspace** via a **local** OAuth connector — no VPS, no MCP
-server, no Anthropic API. The static `knowledge/` snapshot is an explicit
-**STATIC_FALLBACK**. Each proposal run freezes an **immutable knowledge snapshot**
-so generation is reproducible. Setup: `connect_google.py` (one-time browser
-consent) → `sync_google_knowledge.py` → generate. Tokens/credentials never touch
-the repo. See SKILL "ARFADA Knowledge" for the full workflow.
+from a single **local folder** you choose — which may be a Google Drive for Desktop /
+OneDrive / Dropbox / network-mounted folder. The plugin only sees a filesystem path:
+**no OAuth, no Google API, no VPS, no MCP, no Anthropic API**. Setup:
+`knowledge_folder.py set "<path>"` → `refresh_knowledge.py` → generate. Metrics come
+from `Master Tracker.xlsx` (deterministic), CVs are indexed recursively, and each
+proposal run freezes an **immutable snapshot**. The static `knowledge/` snapshot is
+an explicit **STATIC_FALLBACK**. The Google OAuth connector remains available but
+**optional/advanced**. See SKILL "ARFADA Knowledge" for the full workflow.
 
 ---
 

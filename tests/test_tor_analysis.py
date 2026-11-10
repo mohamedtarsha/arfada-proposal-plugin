@@ -2494,7 +2494,7 @@ class TestLiveKnowledgeSource(unittest.TestCase):
                        drive=None, sheets=_FakeSheets(_SAMPLE_ROWS), cache=Cache())
             from engine.tor.knowledge import Knowledge
             k = Knowledge()
-            self.assertEqual(k.source_mode, "LIVE_GOOGLE")
+            self.assertEqual(k.source_mode, "GOOGLE_API")
             self.assertEqual(k.metric("total_surveys")["value"], 2000)
 
     def test_static_fallback_labeled(self):
@@ -2597,7 +2597,7 @@ class TestKnowledgeSnapshot(unittest.TestCase):
             from engine.tor.gknowledge import snapshot as SN
             run_dir = Path(tempfile.mkdtemp())
             man = SN.create_snapshot(run_dir, cache=cache)
-            self.assertEqual(man["source_mode"], "LIVE_GOOGLE")
+            self.assertEqual(man["source_mode"], "GOOGLE_API")
             self.assertIn("snapshot_id", man)
             self.assertTrue(SN.snapshot_exists(run_dir))
 
@@ -2635,7 +2635,7 @@ class TestKnowledgeSnapshot(unittest.TestCase):
             SN.create_snapshot(run_dir, cache=cache)
             from engine.tor.knowledge import Knowledge
             k = Knowledge(run_dir=run_dir)
-            self.assertEqual(k.source_mode, "LIVE_GOOGLE")
+            self.assertEqual(k.source_mode, "GOOGLE_API")
             self.assertEqual(k.metric("total_surveys")["value"], 2000)
 
     def test_cross_run_snapshot_isolation(self):
@@ -2673,7 +2673,7 @@ class TestOfflineMode(unittest.TestCase):
             self.assertFalse(auth.is_connected())
             from engine.tor.knowledge import Knowledge
             k = Knowledge()
-            self.assertEqual(k.source_mode, "LIVE_GOOGLE")  # cache usable offline
+            self.assertEqual(k.source_mode, "GOOGLE_API")  # cache usable offline
 
 
 class TestNumericClaimSource(unittest.TestCase):
@@ -2730,6 +2730,380 @@ class TestNoVPSNoMCP(unittest.TestCase):
             if "import anthropic" in txt or "ANTHROPIC_API_KEY" in txt:
                 offenders.append(py)
         self.assertEqual(offenders, [])
+
+
+# ===========================================================================
+# v0.5.2 tests: Local-folder knowledge source (OAuth-free)
+# ===========================================================================
+
+def _make_knowledge_folder(base: Path, *, with_cloud_placeholder=False,
+                           with_logo=True) -> Path:
+    """Build a synthetic ARFADA Knowledge folder with xlsx + CVs + company + brand."""
+    import sys as _s
+    _s.path.insert(0, str(_ROOT / ".mcp_deps"))
+    root = base / "ARFADA Knowledge"
+    for sub in ("Projects", "Staff CVs/Iraq", "Staff CVs/Jordan", "Company", "Brand"):
+        (root / sub).mkdir(parents=True, exist_ok=True)
+    from openpyxl import Workbook
+    wb = Workbook(); ws = wb.active
+    for r in [["Project Name", "Type", "Country", "Client", "Surveys", "KIIs", "FGDs"],
+              ["Resilience Eval", "Evaluation", "Lebanon", "Oxfam", 1200, 30, 6],
+              ["MSNA", "Needs Assessment", "Syria", "IRC", 800, 20, 4],
+              ["Market Study", "Market Assessment", "Jordan", "ACTED", "", 15, ""]]:
+        ws.append(r)
+    wb.save(str(root / "Projects" / "Master Tracker.xlsx"))
+    from docx import Document
+    for p, txt in [("Staff CVs/Iraq/Jane Smith CV.docx",
+                    "Jane Smith. Team Leader with 12 years experience in evaluation. "
+                    "MSc Development. Languages: English, Arabic."),
+                   ("Staff CVs/Jordan/Omar Ali CV.docx",
+                    "Omar Ali. Enumerator, 3 years experience. Languages: Arabic."),
+                   ("Company/Company Profile.docx", "ARFADA Company Profile.")]:
+        d = Document(); d.add_paragraph(txt); d.save(str(root / p))
+    if with_cloud_placeholder:
+        (root / "Staff CVs" / "Iraq" / "Placeholder CV.docx").write_bytes(b"")
+    if with_logo:
+        import struct, zlib
+        sig = b"\x89PNG\r\n\x1a\n"
+        ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+        ch = lambda t, dd: struct.pack(">I", len(dd)) + t + dd + struct.pack(">I", zlib.crc32(t + dd) & 0xffffffff)
+        (root / "Brand" / "ARFADA Logo.png").write_bytes(
+            sig + ch(b"IHDR", ihdr) + ch(b"IDAT", zlib.compress(b"\x00\xff\xff\xff")) + ch(b"IEND", b""))
+    return root
+
+
+class TestLocalFolderConfig(unittest.TestCase):
+
+    def test_set_show_clear(self):
+        import tempfile
+        with _HomeIsolation():
+            from engine.tor.lknowledge import local_config as LC
+            with tempfile.TemporaryDirectory() as tmp:
+                root = _make_knowledge_folder(Path(tmp))
+                res = LC.set_knowledge_root(str(root))
+                self.assertTrue(res["ok"])
+                self.assertEqual(LC.get_knowledge_root(), str(root))
+                LC.clear_knowledge_root()
+                self.assertIsNone(LC.get_knowledge_root())
+
+    def test_path_with_spaces(self):
+        import tempfile
+        with _HomeIsolation():
+            from engine.tor.lknowledge import local_config as LC
+            with tempfile.TemporaryDirectory() as tmp:
+                spaced = Path(tmp) / "my arfada data"
+                root = _make_knowledge_folder(spaced)
+                res = LC.set_knowledge_root(str(root))
+                self.assertTrue(res["ok"])
+                self.assertIn(" ", LC.get_knowledge_root())
+
+
+class TestLocalScan(unittest.TestCase):
+
+    def _scan(self, tmp, **kw):
+        from engine.tor.gknowledge.cache import Cache
+        from engine.tor.lknowledge.scan import scan_local_folder
+        root = _make_knowledge_folder(Path(tmp), **kw)
+        return scan_local_folder(root, cache=Cache()), root
+
+    def test_master_tracker_xlsx(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                rep, _ = self._scan(tmp)
+                self.assertTrue(rep["ok"])
+                self.assertEqual(rep["projects"]["status"], "OK")
+                self.assertEqual(rep["projects"]["normalized"], 3)
+
+    def test_metrics_from_xlsx(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                rep, _ = self._scan(tmp)
+                m = rep["projects"]["metrics"]
+                self.assertEqual(m["total_surveys"], 2000)
+                self.assertEqual(m["total_kii"], 65)
+                self.assertEqual(m["total_projects"], 3)
+
+    def test_recursive_cv_discovery(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                rep, _ = self._scan(tmp)
+                self.assertEqual(rep["staff"]["profiles"], 2)
+
+    def test_cv_country_from_subfolder(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                self._scan(tmp)
+                from engine.tor.gknowledge.cache import Cache
+                profs = Cache().staff()["profiles"]
+                countries = {p["country"] for p in profs}
+                self.assertTrue({"Iraq", "Jordan"} <= countries)
+
+    def test_company_indexed(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                rep, _ = self._scan(tmp)
+                self.assertEqual(rep["company"]["documents"], 1)
+
+    def test_brand_logo_found(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                rep, _ = self._scan(tmp)
+                self.assertTrue(rep["brand"]["available"])
+
+    def test_brand_fallback_no_logo(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                rep, _ = self._scan(tmp, with_logo=False)
+                self.assertFalse(rep["brand"]["available"])
+
+    def test_cloud_placeholder_unavailable(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                rep, _ = self._scan(tmp, with_cloud_placeholder=True)
+                self.assertGreater(rep["staff"].get("unavailable", 0), 0)
+                self.assertGreaterEqual(rep["staff"]["profiles"], 2)
+
+    def test_empty_cells_not_invented(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                self._scan(tmp)
+                from engine.tor.gknowledge.cache import Cache
+                projs = Cache().projects()["projects"]
+                market = next(p for p in projs if p["client"] == "ACTED")
+                self.assertIsNone(market["surveys"])
+
+    def test_provenance_file_hash(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                self._scan(tmp)
+                from engine.tor.gknowledge.cache import Cache
+                src = Cache().projects()["source"]
+                self.assertIn("file_hash", src)
+                self.assertIn("modified_time", src)
+
+
+class TestLocalIncremental(unittest.TestCase):
+
+    def test_unchanged_on_rescan(self):
+        import tempfile
+        with _HomeIsolation():
+            from engine.tor.gknowledge.cache import Cache
+            from engine.tor.lknowledge.scan import scan_local_folder
+            with tempfile.TemporaryDirectory() as tmp:
+                root = _make_knowledge_folder(Path(tmp))
+                scan_local_folder(root, cache=Cache())
+                rep2 = scan_local_folder(root, cache=Cache())
+                self.assertEqual(rep2["staff"]["unchanged"], 2)
+                self.assertEqual(rep2["staff"]["added"], 0)
+
+    def test_deleted_cv_removed(self):
+        import tempfile
+        with _HomeIsolation():
+            from engine.tor.gknowledge.cache import Cache
+            from engine.tor.lknowledge.scan import scan_local_folder
+            with tempfile.TemporaryDirectory() as tmp:
+                root = _make_knowledge_folder(Path(tmp))
+                scan_local_folder(root, cache=Cache())
+                (root / "Staff CVs" / "Jordan" / "Omar Ali CV.docx").unlink()
+                rep = scan_local_folder(root, cache=Cache())
+                self.assertEqual(rep["staff"]["removed"], 1)
+                self.assertEqual(len(Cache().staff()["profiles"]), 1)
+
+    def test_transactional_bad_root(self):
+        import tempfile
+        with _HomeIsolation():
+            from engine.tor.gknowledge.cache import Cache
+            from engine.tor.lknowledge.scan import scan_local_folder
+            with tempfile.TemporaryDirectory() as tmp:
+                root = _make_knowledge_folder(Path(tmp))
+                scan_local_folder(root, cache=Cache())
+                before = Cache().projects()["metrics"]["total_surveys"]["value"]
+                rep = scan_local_folder(Path(tmp) / "does_not_exist", cache=Cache())
+                self.assertFalse(rep["ok"])
+                self.assertEqual(Cache().projects()["metrics"]["total_surveys"]["value"], before)
+
+
+class TestLocalSourcePriority(unittest.TestCase):
+
+    def test_local_folder_is_source_mode(self):
+        import tempfile
+        with _HomeIsolation():
+            from engine.tor.gknowledge.cache import Cache
+            from engine.tor.lknowledge.scan import scan_local_folder
+            with tempfile.TemporaryDirectory() as tmp:
+                root = _make_knowledge_folder(Path(tmp))
+                scan_local_folder(root, cache=Cache())
+                from engine.tor.knowledge import Knowledge
+                k = Knowledge()
+                self.assertEqual(k.source_mode, "LOCAL_FOLDER")
+                self.assertEqual(k.metric("total_surveys")["value"], 2000)
+
+    def test_static_fallback_when_no_local(self):
+        with _HomeIsolation():
+            from engine.tor.knowledge import Knowledge
+            self.assertEqual(Knowledge().source_mode, "STATIC_FALLBACK")
+
+    def test_google_optional_not_required(self):
+        import tempfile
+        with _HomeIsolation():
+            from engine.tor.gknowledge import auth
+            self.assertFalse(auth.is_connected())
+            from engine.tor.gknowledge.cache import Cache
+            from engine.tor.lknowledge.scan import scan_local_folder
+            with tempfile.TemporaryDirectory() as tmp:
+                root = _make_knowledge_folder(Path(tmp))
+                rep = scan_local_folder(root, cache=Cache())
+                self.assertTrue(rep["ok"])
+
+
+class TestLocalSnapshot(unittest.TestCase):
+
+    def _scan_and_snapshot(self, tmp):
+        from engine.tor.gknowledge.cache import Cache
+        from engine.tor.gknowledge import snapshot as SN
+        from engine.tor.lknowledge.scan import scan_local_folder
+        root = _make_knowledge_folder(Path(tmp))
+        scan_local_folder(root, cache=Cache())
+        run_dir = Path(tmp) / "run"
+        run_dir.mkdir()
+        man = SN.create_snapshot(run_dir, cache=Cache())
+        return run_dir, man
+
+    def test_snapshot_source_local_folder(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                _, man = self._scan_and_snapshot(tmp)
+                self.assertEqual(man["source_mode"], "LOCAL_FOLDER")
+
+    def test_snapshot_immutable_on_local_change(self):
+        import tempfile
+        with _HomeIsolation():
+            from engine.tor.gknowledge.cache import Cache
+            from engine.tor.gknowledge import snapshot as SN
+            from engine.tor.lknowledge.scan import scan_local_folder
+            with tempfile.TemporaryDirectory() as tmp:
+                run_dir, _ = self._scan_and_snapshot(tmp)
+                before = SN.snapshot_metrics(run_dir)["total_surveys"]["value"]
+                root = Path(tmp) / "ARFADA Knowledge"
+                import sys as _s; _s.path.insert(0, str(_ROOT / ".mcp_deps"))
+                from openpyxl import load_workbook
+                wb = load_workbook(str(root / "Projects" / "Master Tracker.xlsx"))
+                wb.active.append(["New", "Evaluation", "Iraq", "GIZ", 5000, 1, 1])
+                wb.save(str(root / "Projects" / "Master Tracker.xlsx"))
+                scan_local_folder(root, cache=Cache())
+                after = SN.snapshot_metrics(run_dir)["total_surveys"]["value"]
+                self.assertEqual(before, after, "local snapshot must stay frozen")
+
+    def test_manifest_has_revision(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                run_dir, man = self._scan_and_snapshot(tmp)
+                self.assertIn("projects_revision", man)
+                self.assertTrue(man["projects_revision"])
+
+
+class TestLocalDocxIntegration(unittest.TestCase):
+
+    def test_docx_from_local_knowledge(self):
+        """End-to-end: local folder → snapshot → generate → DOCX with logo."""
+        import tempfile, json as _json, subprocess, sys as _s
+        _s.path.insert(0, str(_ROOT / ".mcp_deps"))
+        from docx import Document
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                root = _make_knowledge_folder(Path(tmp))
+                env = {**os.environ}
+
+                def run(args):
+                    r = subprocess.run(["python"] + args, capture_output=True,
+                                       cwd=str(_ROOT), env=env)
+                    return r.returncode, r.stdout.decode("utf-8"), r.stderr.decode("utf-8")
+
+                run(["scripts/knowledge_folder.py", "set", str(root)])
+                run(["scripts/refresh_knowledge.py"])
+                from scripts.analyze_tor import analyze
+                result = analyze(EN_DOCX, tmp)
+                run_dir = Path(result["output_dir"])
+                run(["scripts/build_blueprint.py", str(run_dir)])
+
+                man = _json.loads((run_dir / "knowledge_snapshot" /
+                                   "knowledge_manifest.json").read_text(encoding="utf-8"))
+                self.assertEqual(man["source_mode"], "LOCAL_FOLDER")
+
+                rc, out, err = run(["scripts/prepare_section.py", str(run_dir), "CONTEXT"])
+                packet = _json.loads(out)
+                slots = packet["mandatory_slots"]
+                cand = {"section_id": "CONTEXT",
+                        "blocks": [{"block_id": "c1", "type": "paragraph",
+                                    "text": "ARFADA brings a verified record of 2000 surveys "
+                                            "delivered across its portfolio to this assignment."}],
+                        "requirement_response_ledger": [
+                            {"slot_id": s["slot_id"], "requirement_id": s["requirement_id"],
+                             "block_ids": ["c1"], "response_summary": "x", "status": "ADDRESSED"}
+                            for s in slots]}
+                cp = run_dir / "_c.json"
+                cp.write_text(_json.dumps(cand), encoding="utf-8")
+                rc, out, err = run(["scripts/validate_section.py", str(run_dir),
+                                    "CONTEXT", str(cp)])
+                self.assertEqual(rc, 0, err)
+
+                rc, out, err = run(["scripts/render_docx.py", str(run_dir), "--internal"])
+                self.assertEqual(rc, 0, err)
+                doc = Document(str(run_dir / "proposal_internal_review.docx"))
+                self.assertGreater(len(doc.inline_shapes), 0, "local logo should embed")
+
+    def test_client_docx_no_local_path_leak(self):
+        import tempfile, json as _json, subprocess, sys as _s
+        _s.path.insert(0, str(_ROOT / ".mcp_deps"))
+        from docx import Document
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                root = _make_knowledge_folder(Path(tmp))
+                env = {**os.environ}
+
+                def run(args):
+                    r = subprocess.run(["python"] + args, capture_output=True,
+                                       cwd=str(_ROOT), env=env)
+                    return r.returncode, r.stdout.decode("utf-8"), r.stderr.decode("utf-8")
+
+                run(["scripts/knowledge_folder.py", "set", str(root)])
+                run(["scripts/refresh_knowledge.py"])
+                from scripts.analyze_tor import analyze
+                result = analyze(EN_DOCX, tmp)
+                run_dir = Path(result["output_dir"])
+                run(["scripts/build_blueprint.py", str(run_dir)])
+                rc, out, err = run(["scripts/prepare_section.py", str(run_dir), "METHODOLOGY"])
+                packet = _json.loads(out)
+                slots = packet["mandatory_slots"]
+                cand = {"section_id": "METHODOLOGY",
+                        "blocks": [{"block_id": "m1", "type": "paragraph",
+                                    "text": "ARFADA proposes a rigorous mixed-methods design "
+                                            "aligned to the TOR evaluation questions."}],
+                        "requirement_response_ledger": [
+                            {"slot_id": s["slot_id"], "requirement_id": s["requirement_id"],
+                             "block_ids": ["m1"], "response_summary": "x", "status": "ADDRESSED"}
+                            for s in slots]}
+                cp = run_dir / "_m.json"
+                cp.write_text(_json.dumps(cand), encoding="utf-8")
+                run(["scripts/validate_section.py", str(run_dir), "METHODOLOGY", str(cp)])
+                run(["scripts/render_docx.py", str(run_dir), "--client"])
+                if (run_dir / "proposal_client_draft.docx").exists():
+                    doc = Document(str(run_dir / "proposal_client_draft.docx"))
+                    text = "\n".join(p.text for p in doc.paragraphs)
+                    self.assertNotIn(str(root), text)
+                    self.assertNotIn("ARFADA Knowledge", text)
 
 
 if __name__ == "__main__":

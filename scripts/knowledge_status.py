@@ -43,26 +43,36 @@ def main(argv=None) -> int:
     from engine.tor.gknowledge.config import load_sources
     from engine.tor.knowledge import knowledge_version
 
+    from engine.tor.lknowledge import local_config as LC
+
     cache = Cache()
     sources = load_sources()
     connected = auth.is_connected()
     age = cache.age_hours()
+    knowledge_root = LC.get_knowledge_root()
 
     projects = cache.projects()
     staff = cache.staff()
     company = cache.company()
     brand = cache.brand()
 
+    # Active source mode: whatever wrote the cache (LOCAL_FOLDER | GOOGLE_API),
+    # with an offline suffix for Google when not currently connected.
     source_mode = "STATIC_FALLBACK"
     if cache.has_any():
-        source_mode = "LIVE_GOOGLE" if connected else "LIVE_GOOGLE_OFFLINE_CACHE"
+        origin = cache.source_mode() or "LOCAL_FOLDER"
+        if origin == "GOOGLE_API" and not connected:
+            source_mode = "GOOGLE_API_OFFLINE_CACHE"
+        else:
+            source_mode = origin
 
     _out({
-        "google_connected": connected,
         "source_mode": source_mode,
-        "sources_configured": sources.is_configured(),
-        "sources_config_path": sources.path,
-        "last_sync": cache.last_sync(),
+        "knowledge_root": knowledge_root,
+        "local_folder_configured": bool(knowledge_root),
+        "google_connected": connected,
+        "google_sources_configured": sources.is_configured(),
+        "last_refresh": cache.last_sync(),
         "cache_age_hours": round(age, 1) if age is not None else None,
         "freshness": _freshness(age),
         "projects": {"synced": bool(projects), "count": (projects or {}).get("count", 0),
