@@ -6,6 +6,49 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.6.1] — 2026-11-10
+
+### Added — Winning Proposal Library / ARFADA Writing DNA (style only, post-launch)
+
+A local folder of past winning proposals teaches ARFADA's human writing style,
+structure, formatting, and TOR→response patterns. **STYLE exemplars only — never a
+factual source.** Strict separation: facts (Master Tracker/CVs/company/TOR/decisions)
+stay authoritative; historical proposals are lowest-authority style guidance and are
+never copied verbatim.
+
+**New package `engine/tor/exemplars/`:**
+- `exemplar_config.py` — library root get/set/clear (user config; `ARFADA_EXEMPLAR_ROOT` override)
+- `scan.py` — recursive discovery, TOR↔proposal pairing (ambiguous excluded), section
+  extraction, incremental (path+mtime) + transactional; cache under
+  `~/.arfada-proposal/exemplars/` (gitignored); no OCR, scanned docs warn; prefers DOCX
+- `dna.py` — Writing DNA (paragraph/sentence length, modal usage, voice, bullet/table
+  frequency), Formatting DNA (section order), TOR→response patterns (rationale /
+  respondents / triangulation / analysis / QA / ethics)
+- `retrieval.py` — section-specific ranked retrieval (assignment type + country + region),
+  top-3, bounded excerpts
+- `anticopy.py` — deterministic similarity guard (8-gram overlap + longest shared run) +
+  historical entity-leak detection
+
+**New scripts:** `exemplar_library.py` (set/show/clear), `refresh_exemplars.py` (scan + --status).
+
+**Wiring:** generation packets gain `style_guidance.writing_dna`,
+`style_guidance.response_patterns`, and `historical_exemplars` at **LOWEST authority**
+(TOR → decisions → knowledge snapshot → constraints → style). `validate_section.py`
+rejects `VERBATIM_COPY` / `HISTORICAL_LEAK`; Final QA adds a `HISTORICAL_COPY` check.
+Exemplars never populate `verified_arfada_facts` (source separation enforced structurally).
+
+### Validated
+- Real library (`Firass's Proposals`, local, not committed): 7 countries, 14 projects,
+  6 valid pairs, 0 ambiguous/unreadable, 13 docs → Writing DNA (35-word median paragraphs,
+  ~13 tables/doc, organizational voice). Section-specific retrieval returns distinct
+  exemplars per section ranked by type+country. A/B: DNA-guided packet carries style
+  guidance + bounded exemplars while `verified_arfada_facts` stays empty.
+- Anti-copy: verbatim copy flagged, fresh/generic text clean, entity leak detected.
+
+### Tests: 274/274 (20 new, synthetic fixtures only). Final QA still green. No corpus committed.
+
+---
+
 ## [0.6.0] — 2026-11-10
 
 ### Added — Final Quality Review (PE7 lineage) — last core development phase

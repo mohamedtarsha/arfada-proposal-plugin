@@ -20,6 +20,12 @@ knowledge_cache/
 **/staff_index.json
 **/source_state.json
 
+# Winning Proposal Library — historical corpus is NEVER committed (style exemplars
+# live user-local under ~/.arfada-proposal/exemplars/; these guard against a stray copy)
+**/exemplar_index.json
+**/exemplar_library.json
+**/sections/ex_*.json
+
 # The team-shared source manifest may be committed (IDs only); the real one is
 # arfada_sources.yaml — keep ONLY the .example in Git by default.
 config/arfada_sources.yaml

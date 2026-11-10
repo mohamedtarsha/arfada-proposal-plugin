@@ -87,6 +87,9 @@ def build_packet(
     framework_columns: Optional[list] = None,
     assignment_type: str = "",
     knowledge_version: str = "",
+    writing_dna: Optional[dict] = None,
+    response_patterns: Optional[dict] = None,
+    historical_exemplars: Optional[list] = None,
 ) -> dict:
     """Build the bounded, section-scoped generation packet.
 
@@ -204,6 +207,19 @@ def build_packet(
             "avoid": ["generic AI phrases", "restating the TOR without a proposed approach",
                       "unsupported superlatives", "walls of text"],
         },
+        # Historical winning-proposal STYLE guidance (v0.6.1) — LOWEST authority.
+        # NEVER overrides TOR / decisions / knowledge snapshot / constraints, and
+        # must NOT be copied verbatim (the validator runs an anti-copy guard).
+        "style_guidance": {
+            "writing_dna": writing_dna or {},
+            "response_patterns": response_patterns or {},
+            "authority": "LOWEST — style/structure only, never a source of facts",
+            "anti_copy": ("Learn the STYLE, STRUCTURE, and REASONING pattern from the "
+                          "historical exemplars below. NEVER copy their wording, project "
+                          "names, client names, personnel, dates, or numbers. Write fresh "
+                          "text grounded ONLY in this TOR + approved decisions + knowledge."),
+        },
+        "historical_exemplars": historical_exemplars or [],
     }
 
 
@@ -396,6 +412,23 @@ def validate_candidate(packet: dict, candidate: dict) -> dict:
         if not (has_placeholder or has_evidence_tag):
             warnings.append(f"section needs ARFADA evidence but no {NEEDS_EVIDENCE_TAG} "
                             "placeholder present")
+
+    # --- anti-copy guard vs historical exemplars (v0.6.1) ---
+    exemplars = packet.get("historical_exemplars", [])
+    if exemplars:
+        try:
+            from .exemplars.anticopy import similarity_report, leaked_historical_entities
+            excerpts = [e.get("style_excerpt", "") for e in exemplars]
+            sim = similarity_report(all_text, excerpts)
+            if sim["flagged"]:
+                errors.append("VERBATIM_COPY: generated text too similar to a historical "
+                              f"exemplar ({sim['detail']})")
+            leaks = leaked_historical_entities(all_text, exemplars)
+            if leaks:
+                errors.append(f"HISTORICAL_LEAK: old project/client token(s) {leaks} copied "
+                              "from a historical exemplar")
+        except Exception:
+            pass
 
     valid = not errors and not failed_slots
     status = "READY" if valid else "FAILED"

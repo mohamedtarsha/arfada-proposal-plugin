@@ -4,15 +4,15 @@ description: >
   ARFADA Proposal Assistant — TOR analysis, human decision review, controlled
   draft generation, and professional Word export for ARFADA team members. Invoke
   with /arfada-proposal to analyze a TOR, review decisions, generate, or export.
-version: 0.6.0
+version: 0.6.1
 trigger: /arfada-proposal
 ---
 
 # ARFADA Proposal Assistant
 
-**Plugin version:** 0.6.0
+**Plugin version:** 0.6.1
 **Publisher:** ARFADA
-**Status:** Complete — TOR analysis → decisions → knowledge → generation → DOCX → Final QA
+**Status:** Complete + Writing DNA — TOR → decisions → knowledge → generation → DOCX → Final QA
 
 ---
 
@@ -112,6 +112,64 @@ is NOT required. Prefer the local folder (works offline, no credentials).
 Present candidates, let the user choose, record the approved `staff_id` in the
 Decision Register before generation uses that person's facts. Never invent staff
 names — use "To be nominated".
+
+---
+
+## Winning Proposal Library (ARFADA Writing DNA — STYLE ONLY)
+
+A separate local folder of **past winning proposals** teaches ARFADA's human writing
+style, structure, formatting, and TOR→response patterns. It is **STYLE guidance only**
+— never a factual source. Strict separation:
+- **Facts** (Master Tracker / CVs / company / TOR / decisions) — authoritative
+- **Historical proposals** — style/structure/response-pattern exemplars only, LOWEST authority
+
+Historical content NEVER becomes a current fact (counts, staff, clients, dates, metrics)
+and must NEVER be copied verbatim — the validator + Final QA run an anti-copy guard.
+
+### Set / show / clear
+```bash
+python "<plugin_root>/scripts/exemplar_library.py" set "C:/Users/<you>/Firass's Proposals"
+python "<plugin_root>/scripts/exemplar_library.py" show
+python "<plugin_root>/scripts/exemplar_library.py" clear
+```
+
+### Refresh + status
+```bash
+python "<plugin_root>/scripts/refresh_exemplars.py"            # scan → index + Writing DNA
+python "<plugin_root>/scripts/refresh_exemplars.py" --status   # library status
+```
+Recursively discovers `Country/Project/{TOR, Proposal}`, pairs them (ambiguous pairs
+excluded), extracts section exemplars + Writing/Formatting DNA + response patterns.
+Prefers DOCX, no OCR, scanned docs warn. Status shows configured path, projects, valid
+pairs, ambiguous pairs, countries, assignment types, last refresh, warnings. Everything
+is LOCAL (gitignored) — no corpus content is ever committed or printed.
+
+### How it influences generation (automatic, bounded)
+When a library is configured, each generation packet gains (at LOWEST authority):
+- `style_guidance.writing_dna` — corpus paragraph length, table/bullet usage, voice, guidance
+- `style_guidance.response_patterns` — how ARFADA answers requirements (rationale, respondents,
+  triangulation, analysis) — reproduce the REASONING pattern, never the wording
+- `historical_exemplars` — top-3 section-specific bounded excerpts (methodology exemplars for
+  METHODOLOGY, workplan for WORKPLAN, etc.)
+
+Use these to write in ARFADA's specific, human style and reduce generic AI phrasing.
+**Authority order (unchanged):** TOR → approved decisions → knowledge snapshot →
+blueprint/constraints → historical style guidance (lowest). Exemplars can never
+override the first four.
+
+### Anti-copy enforcement
+`validate_section.py` rejects a section as `VERBATIM_COPY` if it is too similar to a
+retrieved exemplar, and `HISTORICAL_LEAK` if an old project/client token appears.
+Final QA repeats these checks (`HISTORICAL_COPY`). Learn style, never reproduce text.
+
+---
+
+## Constraints (Winning Proposal Library)
+
+- Historical proposals are STYLE exemplars — NEVER a source of current facts.
+- NEVER copy historical paragraphs, client/project names, staff, dates, or counts.
+- Corpus stays local (gitignored); never commit or print corpus content.
+- Exemplar guidance is lowest authority — TOR/decisions/knowledge/constraints always win.
 
 ---
 

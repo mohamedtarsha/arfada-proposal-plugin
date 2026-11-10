@@ -151,6 +151,7 @@ def run_final_qa(run_dir: str | Path, *, plugin_version: str = "0.6.0") -> dict:
     findings += _check_readability(ctx)
     findings += _check_duplication(ctx)
     findings += _check_client_leakage(ctx)
+    findings += _check_historical_copy(ctx)
 
     # dedup
     seen, uniq = set(), []
@@ -846,6 +847,52 @@ def _check_client_leakage(ctx) -> list[Finding]:
 
 def _all_generated_text(ctx) -> str:
     return "\n".join(_section_text(c) for c in ctx["gen_sections"].values())
+
+
+# ---------------------------------------------------------------------------
+# CHECK: historical exemplar copy / leakage (v0.6.1)
+# ---------------------------------------------------------------------------
+
+def _check_historical_copy(ctx) -> list[Finding]:
+    """Flag verbatim copying of, or entity leakage from, the winning-proposal library.
+
+    Uses the packet's historical_exemplars if present (what was actually shown to
+    generation). Silent no-op when the exemplar library isn't configured.
+    """
+    out = []
+    try:
+        from .exemplars.anticopy import similarity_report, leaked_historical_entities
+    except Exception:
+        return out
+    packets_dir = ctx["run_dir"] / "generation_packets"
+    if not packets_dir.exists():
+        return out
+    for sid, cand in ctx["gen_sections"].items():
+        pk_path = packets_dir / f"{sid}.json"
+        if not pk_path.exists():
+            continue
+        try:
+            packet = json.loads(pk_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        exemplars = packet.get("historical_exemplars", [])
+        if not exemplars:
+            continue
+        text = _section_text(cand)
+        excerpts = [e.get("style_excerpt", "") for e in exemplars]
+        sim = similarity_report(text, excerpts)
+        if sim["flagged"]:
+            out.append(Finding("HISTORICAL_COPY", ERROR, "verbatim_similarity",
+                               f"Section too similar to a historical exemplar ({sim['detail']})",
+                               section_id=sid,
+                               recommended_action="Rewrite in ARFADA style without copying."))
+        leaks = leaked_historical_entities(text, exemplars)
+        if leaks:
+            out.append(Finding("HISTORICAL_COPY", CRITICAL, "entity_leak",
+                               f"Historical project/client token(s) {leaks} leaked into the proposal",
+                               section_id=sid,
+                               recommended_action="Remove old client/project references."))
+    return out
 
 
 # ---------------------------------------------------------------------------

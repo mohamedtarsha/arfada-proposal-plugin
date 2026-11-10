@@ -94,6 +94,22 @@ def main(argv=None) -> int:
         country=country, region="MENA",
     )
 
+    # Historical winning-proposal STYLE exemplars (v0.6.1) — LOWEST authority, bounded,
+    # section-specific. Never facts; the validator runs an anti-copy guard.
+    writing_dna = {}
+    response_patterns = {}
+    historical_exemplars = []
+    try:
+        from engine.tor.exemplars import retrieval as _ex
+        if _ex.is_configured():
+            writing_dna = _ex.writing_dna()
+            response_patterns = _ex.response_patterns()
+            historical_exemplars = _ex.retrieve_for_section(
+                section_id, assignment_type=blueprint.get("assignment_type", ""),
+                country=country, region="MENA", top=3)
+    except Exception:
+        pass
+
     packet = build_packet(
         section=section,
         slots=blueprint.get("slots", []),
@@ -105,6 +121,9 @@ def main(argv=None) -> int:
         framework_columns=blueprint.get("framework_columns", []),
         assignment_type=blueprint.get("assignment_type", ""),
         knowledge_version=blueprint.get("knowledge_version", kb.version),
+        writing_dna=writing_dna,
+        response_patterns=response_patterns,
+        historical_exemplars=historical_exemplars,
     )
 
     packets_dir = run_dir / "generation_packets"

@@ -3,10 +3,22 @@
 A Claude Code plugin for ARFADA staff. Brings structured TOR analysis and
 proposal drafting into Claude Code — distributed privately via GitHub.
 
-> **Status:** COMPLETE (v0.6.0) — TOR Analysis → Decision Review → Local Knowledge →
-> Controlled Generation → Professional Word → **Final Quality Review (GREEN/YELLOW/RED)**.
+> **Status:** COMPLETE (v0.6.1) — TOR Analysis → Decision Review → Local Knowledge →
+> Controlled Generation → Professional Word → Final Quality Review (GREEN/YELLOW/RED),
+> plus a local **Winning Proposal Library / ARFADA Writing DNA** (style only).
 > Core development done; the plugin is in team use. Future work = small bugfixes +
 > real-TOR tuning from actual usage.
+
+### Winning Proposal Library (v0.6.1) — ARFADA Writing DNA, style only
+
+A local folder of past winning proposals teaches ARFADA's human writing style,
+structure, formatting, and TOR→response patterns — **exemplars only, never facts**.
+`exemplar_library.py set <folder>` → `refresh_exemplars.py` extracts Writing/Formatting
+DNA + section exemplars (recursive discovery, TOR↔proposal pairing, ambiguous excluded).
+Generation packets gain bounded, section-specific style guidance at **lowest authority**
+(TOR/decisions/knowledge/constraints always win). A deterministic **anti-copy guard**
+rejects verbatim copying and historical client/project leakage (in both section
+validation and Final QA). The corpus stays **local and gitignored** — never committed.
 
 ### Final Quality Review (v0.6.0)
 

@@ -3454,5 +3454,316 @@ class TestFinalQAArtifacts(unittest.TestCase):
         self.assertNotIn("ANTHROPIC_API_KEY", txt)
 
 
+# ===========================================================================
+# v0.6.1 tests: Winning Proposal Library / ARFADA Writing DNA (synthetic, no real corpus)
+# ===========================================================================
+
+def _make_proposal_docx(path: Path, *, sections: list):
+    """Build a synthetic proposal DOCX with headings + paragraphs + a table."""
+    import sys as _s
+    _s.path.insert(0, str(_ROOT / ".mcp_deps"))
+    from docx import Document
+    doc = Document()
+    for heading, body in sections:
+        doc.add_heading(heading, level=1)
+        doc.add_paragraph(body)
+    # a table (ARFADA style)
+    t = doc.add_table(rows=2, cols=2)
+    t.rows[0].cells[0].text = "Criterion"; t.rows[0].cells[1].text = "Method"
+    t.rows[1].cells[0].text = "Relevance"; t.rows[1].cells[1].text = "KII"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    doc.save(str(path))
+
+
+def _make_library(base: Path, *, ambiguous=False) -> Path:
+    """Synthetic winning-proposal library: Country/Project/{ToR,Proposal}."""
+    root = base / "Winning Proposals"
+    # Lebanon evaluation project
+    proj = root / "Lebanon" / "101_Evaluation_Lebanon_Oxfam"
+    _make_proposal_docx(proj / "20260101_Oxfam_Proposal_ARFADA.docx", sections=[
+        ("Executive Summary", "ARFADA presents a rigorous, evidence-based evaluation proposal "
+         "tailored to the assignment, summarizing approach, team, and value."),
+        ("Methodology", "The evaluation applies a mixed-methods design triangulating qualitative "
+         "and quantitative evidence. Key informant interviews explore decision-maker perspectives "
+         "while a household survey measures outcomes; findings are integrated thematically."),
+        ("Data Collection", "Primary data collection comprises KIIs and FGDs with defined "
+         "respondent categories, complemented by a structured household survey."),
+        ("Workplan", "The assignment proceeds through inception, fieldwork, analysis, and "
+         "reporting phases over the agreed period."),
+        ("Deliverables", "Inception report, draft report, and final evaluation report, each "
+         "submitted for client review and approval."),
+    ])
+    import sys as _s
+    _s.path.insert(0, str(_ROOT / ".mcp_deps"))
+    from docx import Document
+    tor = Document(); tor.add_heading("Terms of Reference", 0)
+    tor.add_paragraph("Final Evaluation of the programme in Lebanon. Assess relevance, "
+                      "effectiveness, efficiency, and sustainability against OECD-DAC criteria.")
+    (proj).mkdir(parents=True, exist_ok=True)
+    tor.save(str(proj / "ToR.docx"))
+
+    # Sudan evaluation project
+    proj2 = root / "Sudan" / "261_Evaluation_Sudan_IRC"
+    _make_proposal_docx(proj2 / "Proposal_ARFADA.docx", sections=[
+        ("Methodology", "A mixed-methods evaluation design triangulates evidence across sources, "
+         "with KIIs and a survey informing a thematic analysis."),
+        ("Workplan", "Phased delivery across inception, fieldwork, and reporting."),
+    ])
+    tor2 = Document(); tor2.add_heading("TOR", 0)
+    tor2.add_paragraph("External evaluation in Sudan against OECD-DAC criteria.")
+    (proj2).mkdir(parents=True, exist_ok=True)
+    tor2.save(str(proj2 / "ToR.docx"))
+
+    if ambiguous:
+        # a project with TWO TOR-like files and no clear proposal → AMBIGUOUS
+        proj3 = root / "Iraq" / "500_Ambiguous_Iraq"
+        proj3.mkdir(parents=True, exist_ok=True)
+        d1 = Document(); d1.add_paragraph("TOR one")
+        d1.save(str(proj3 / "Terms of Reference v1.docx"))
+        d2 = Document(); d2.add_paragraph("TOR two")
+        d2.save(str(proj3 / "Terms of Reference final.docx"))
+    return root
+
+
+class TestExemplarConfig(unittest.TestCase):
+
+    def test_set_show_clear(self):
+        import tempfile
+        with _HomeIsolation():
+            from engine.tor.exemplars.exemplar_config import (
+                set_library_root, get_library_root, clear_library_root)
+            with tempfile.TemporaryDirectory() as tmp:
+                root = _make_library(Path(tmp))
+                self.assertTrue(set_library_root(str(root))["ok"])
+                self.assertEqual(get_library_root(), str(root))
+                clear_library_root()
+                self.assertIsNone(get_library_root())
+
+    def test_path_with_apostrophe(self):
+        import tempfile
+        with _HomeIsolation():
+            from engine.tor.exemplars.exemplar_config import set_library_root, get_library_root
+            with tempfile.TemporaryDirectory() as tmp:
+                apo = Path(tmp) / "Firass's Proposals"
+                root = _make_library(apo)
+                self.assertTrue(set_library_root(str(root))["ok"])
+                self.assertIn("'", get_library_root())
+
+
+class TestExemplarScan(unittest.TestCase):
+
+    def _scan(self, tmp, **kw):
+        from engine.tor.exemplars.scan import scan_library, exemplar_cache_dir
+        root = _make_library(Path(tmp), **kw)
+        return scan_library(root, cache_dir=exemplar_cache_dir()), root
+
+    def test_recursive_discovery_and_pairing(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                rep, _ = self._scan(tmp)
+                self.assertTrue(rep["ok"])
+                self.assertIn("Lebanon", rep["countries"])
+                self.assertIn("Sudan", rep["countries"])
+                self.assertGreaterEqual(rep["valid_pairs"], 2)
+
+    def test_ambiguous_excluded(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                rep, _ = self._scan(tmp, ambiguous=True)
+                self.assertGreaterEqual(rep["ambiguous"], 1)
+
+    def test_writing_dna_extracted(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                rep, _ = self._scan(tmp)
+                dna = rep["writing_dna"]
+                self.assertGreater(dna["documents"], 0)
+                self.assertGreater(dna["paragraph_word_median"], 0)
+                self.assertIn("guidance", dna)
+
+    def test_formatting_and_response_patterns(self):
+        import tempfile
+        with _HomeIsolation():
+            from engine.tor.exemplars.scan import _load_index, exemplar_cache_dir
+            with tempfile.TemporaryDirectory() as tmp:
+                self._scan(tmp)
+                idx = _load_index(exemplar_cache_dir())
+                self.assertIn("formatting_dna", idx)
+                self.assertIn("response_patterns", idx)
+                self.assertIn("KII", idx["response_patterns"]["common_methods"])
+
+    def test_incremental_unchanged(self):
+        import tempfile
+        with _HomeIsolation():
+            from engine.tor.exemplars.scan import scan_library, exemplar_cache_dir
+            with tempfile.TemporaryDirectory() as tmp:
+                root = _make_library(Path(tmp))
+                scan_library(root, cache_dir=exemplar_cache_dir())
+                rep2 = scan_library(root, cache_dir=exemplar_cache_dir())
+                self.assertGreater(rep2["unchanged"], 0)
+                self.assertEqual(rep2["added"], 0)
+
+    def test_source_deletion(self):
+        import tempfile, shutil
+        with _HomeIsolation():
+            from engine.tor.exemplars.scan import scan_library, exemplar_cache_dir, _load_index
+            with tempfile.TemporaryDirectory() as tmp:
+                root = _make_library(Path(tmp))
+                scan_library(root, cache_dir=exemplar_cache_dir())
+                shutil.rmtree(root / "Sudan")
+                rep = scan_library(root, cache_dir=exemplar_cache_dir())
+                self.assertNotIn("Sudan", rep["countries"])
+
+
+class TestExemplarRetrieval(unittest.TestCase):
+
+    def _setup(self, tmp):
+        from engine.tor.exemplars.scan import scan_library, exemplar_cache_dir
+        root = _make_library(Path(tmp))
+        scan_library(root, cache_dir=exemplar_cache_dir())
+
+    def test_section_specific_retrieval(self):
+        import tempfile
+        with _HomeIsolation():
+            from engine.tor.exemplars.retrieval import retrieve_for_section
+            with tempfile.TemporaryDirectory() as tmp:
+                self._setup(tmp)
+                meth = retrieve_for_section("METHODOLOGY", assignment_type="EVALUATION",
+                                            country="Lebanon", top=3)
+                self.assertGreater(len(meth), 0)
+                self.assertTrue(all(e["section_type"] == "METHODOLOGY" for e in meth))
+
+    def test_assignment_type_ranking(self):
+        import tempfile
+        with _HomeIsolation():
+            from engine.tor.exemplars.retrieval import retrieve_for_section
+            with tempfile.TemporaryDirectory() as tmp:
+                self._setup(tmp)
+                res = retrieve_for_section("METHODOLOGY", assignment_type="EVALUATION", top=3)
+                self.assertTrue(res[0]["assignment_type"] == "EVALUATION")
+
+    def test_country_ranking(self):
+        import tempfile
+        with _HomeIsolation():
+            from engine.tor.exemplars.retrieval import retrieve_for_section
+            with tempfile.TemporaryDirectory() as tmp:
+                self._setup(tmp)
+                res = retrieve_for_section("METHODOLOGY", assignment_type="EVALUATION",
+                                           country="Lebanon", top=3)
+                # Lebanon exemplar should rank at/near top (type+country)
+                self.assertTrue(any(e["country"] == "Lebanon" for e in res))
+
+    def test_excerpt_bounded(self):
+        import tempfile
+        with _HomeIsolation():
+            from engine.tor.exemplars.retrieval import retrieve_for_section
+            with tempfile.TemporaryDirectory() as tmp:
+                self._setup(tmp)
+                res = retrieve_for_section("METHODOLOGY", assignment_type="EVALUATION", top=3)
+                for e in res:
+                    self.assertLessEqual(len(e["style_excerpt"]), 600)
+
+
+class TestExemplarAntiCopy(unittest.TestCase):
+
+    def test_verbatim_copy_flagged(self):
+        from engine.tor.exemplars.anticopy import similarity_report
+        ex = ("ARFADA will conduct a rigorous mixed-methods evaluation triangulating "
+              "qualitative and quantitative evidence against each evaluation question in the "
+              "terms of reference provided by the client")
+        copied = ex + " and more"
+        self.assertTrue(similarity_report(copied, [ex])["flagged"])
+
+    def test_fresh_text_not_flagged(self):
+        from engine.tor.exemplars.anticopy import similarity_report
+        ex = ("ARFADA will conduct a rigorous mixed-methods evaluation triangulating "
+              "qualitative and quantitative evidence against each evaluation question")
+        fresh = ("Our proposed approach blends interviews with a short survey, cross-checking "
+                 "results across sources before a thematic synthesis.")
+        self.assertFalse(similarity_report(fresh, [ex])["flagged"])
+
+    def test_generic_terms_not_flagged(self):
+        from engine.tor.exemplars.anticopy import similarity_report
+        ex = "The methodology section describes the evaluation approach and data collection tools."
+        gen = "Our methodology explains the evaluation approach and the data collection tools used."
+        # short generic overlap should not trip the guard
+        self.assertFalse(similarity_report(gen, [ex])["flagged"])
+
+    def test_entity_leak_detected(self):
+        from engine.tor.exemplars.anticopy import leaked_historical_entities
+        leaks = leaked_historical_entities(
+            "Building on our 261_Evaluation work delivered for IRC in the region.",
+            [{"project_folder": "261_Evaluation_Sudan_IRC"}])
+        self.assertTrue(leaks)
+
+
+class TestExemplarValidatorIntegration(unittest.TestCase):
+
+    def test_copied_section_rejected(self):
+        """A section that copies the exemplar excerpt is rejected by validate_candidate."""
+        from engine.tor.generation import validate_candidate
+        excerpt = ("ARFADA will conduct a rigorous mixed-methods evaluation triangulating "
+                   "qualitative and quantitative evidence against each evaluation question in "
+                   "the terms of reference, with interviews and a survey informing the analysis")
+        packet = {"section_id": "METHODOLOGY", "mandatory_slots": [], "applied_decisions": [],
+                  "verified_arfada_facts": [], "needs_arfada_evidence": False,
+                  "historical_exemplars": [{"style_excerpt": excerpt}]}
+        cand = {"section_id": "METHODOLOGY",
+                "blocks": [{"block_id": "b1", "type": "paragraph", "text": excerpt + " overall."}],
+                "requirement_response_ledger": []}
+        v = validate_candidate(packet, cand)
+        self.assertFalse(v["valid"])
+        self.assertTrue(any("VERBATIM_COPY" in e for e in v["errors"]))
+
+    def test_fresh_section_passes_with_exemplars(self):
+        from engine.tor.generation import validate_candidate
+        excerpt = ("ARFADA will conduct a rigorous mixed-methods evaluation triangulating "
+                   "qualitative and quantitative evidence against each evaluation question")
+        packet = {"section_id": "METHODOLOGY", "mandatory_slots": [], "applied_decisions": [],
+                  "verified_arfada_facts": [], "needs_arfada_evidence": False,
+                  "historical_exemplars": [{"style_excerpt": excerpt}]}
+        cand = {"section_id": "METHODOLOGY",
+                "blocks": [{"block_id": "b1", "type": "paragraph",
+                            "text": "Our team proposes an integrated design that combines targeted "
+                                    "interviews with a concise household survey, verifying findings "
+                                    "across sources before synthesis."}],
+                "requirement_response_ledger": []}
+        v = validate_candidate(packet, cand)
+        self.assertTrue(v["valid"], f"errors: {v['errors']}")
+
+
+class TestExemplarSourceSeparation(unittest.TestCase):
+
+    def test_historical_not_a_fact_source(self):
+        """Exemplars populate style_guidance/historical_exemplars, never verified_arfada_facts."""
+        from engine.tor.generation import build_packet
+        packet = build_packet(
+            section={"section_id": "CONTEXT", "title": "Context", "purpose": "",
+                     "requirement_ids": [], "preferred_modes": ["PROSE"],
+                     "decision_dependencies": [], "needs_arfada_evidence": False},
+            slots=[], requirements_by_id={}, decision_register=None, language="english",
+            assignment_metadata={}, verified_arfada_facts=[],
+            historical_exemplars=[{"style_excerpt": "ARFADA completed 500 evaluations",
+                                   "country": "X"}],
+            writing_dna={"paragraph_word_median": 35})
+        # exemplar content must NOT appear in verified_arfada_facts
+        self.assertEqual(packet["verified_arfada_facts"], [])
+        self.assertIn("historical_exemplars", packet)
+        self.assertEqual(packet["style_guidance"]["authority"],
+                         "LOWEST — style/structure only, never a source of facts")
+
+    def test_no_corpus_committed(self):
+        """No real proposal/corpus content or exemplar cache is tracked in Git."""
+        import glob
+        bad = []
+        for pat in ("exemplar_index.json", "exemplar_library.json"):
+            bad += glob.glob(str(_ROOT / "**" / pat), recursive=True)
+        # the sections cache and index live under ~/.arfada-proposal, never in repo
+        self.assertEqual(bad, [], f"exemplar cache leaked into repo: {bad}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
