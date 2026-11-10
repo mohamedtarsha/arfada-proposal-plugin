@@ -6,6 +6,63 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.5.1] — 2026-11-10
+
+### Added — Phase 4.1 Live Google Workspace Knowledge Connector (local-only)
+
+Google Drive/Sheets become the LIVE operational source of truth; the static
+`knowledge/` snapshot remains an explicit **STATIC_FALLBACK**. Everything runs
+locally — no VPS, no MCP server, no Anthropic API. Google is the only external
+data connection (read-only).
+
+**New package `engine/tor/gknowledge/`:**
+- `paths.py` — user-local dirs (`~/.arfada-proposal/`, `ARFADA_HOME` override); tokens/cache NEVER in repo
+- `auth.py` — OAuth desktop flow (read-only Drive+Sheets scopes); tokens stored locally, never printed
+- `config.py` — `arfada_sources.yaml` loader (source IDs only, never credentials)
+- `clients.py` — Drive/Sheets clients behind an injectable protocol (tests use fakes)
+- `normalize.py` — Master Tracker rows → project records (empty cells → None, never invented) +
+  deterministic metric aggregation (Python sums, never the model); CV text → staff profiles with evidence
+- `cache.py` — local normalized cache; atomic writes; freshness/age
+- `sync.py` — incremental (by modifiedTime), transactional (failed sync keeps prior cache);
+  added/updated/unchanged/removed report; deleted-file handling
+- `snapshot.py` — per-run frozen knowledge snapshot + manifest (snapshot_id, source_mode,
+  revisions, sync times, plugin_version); **immutable** once created
+
+**`engine/tor/knowledge.py`** — source priority: frozen run snapshot > live Google cache >
+STATIC_FALLBACK. Live metrics/projects override static. New `search_staff()` (hard min-years
+filter + soft ranking; candidates are NOT auto-approved).
+
+**New scripts:** `connect_google.py`, `sync_google_knowledge.py`, `knowledge_status.py`.
+**Config:** `config/arfada_sources.example.yaml` (IDs only). **.gitignore:** tokens, client
+secrets, `.arfada-proposal/`, cache, real `arfada_sources.yaml`.
+
+**Wiring:** `build_blueprint.py` freezes the snapshot at generation start; `prepare_section.py`
+reads facts from the frozen snapshot (`Knowledge(run_dir)`); `render_docx.py` auto-resolves the
+brand logo from the live cache (falls back to neutral cover).
+
+### Behaviour
+- Static metrics (146/2558/1556/69698) are NOT silently authoritative once live Google is active;
+  live normalized source takes priority (reconciliation is explicit, not automatic overwrite).
+- Numeric org claims must trace to a snapshot metric fact; else NEEDS_ARFADA_EVIDENCE.
+- Offline: a valid cache is usable (LIVE_GOOGLE_OFFLINE_CACHE); never-connected → STATIC_FALLBACK.
+
+### Validated (mocked Google, no credentials)
+- sheet→3 normalized projects; metrics 2000 surveys / 65 KII / 10 FGD (deterministic)
+- incremental unchanged/added/removed; transactional failure keeps prior cache
+- snapshot immutability (live change does not mutate a frozen run); cross-run isolation
+- live overrides static; static fallback labeled; staff min-years filter + ranking
+- numeric claim traces to snapshot fact
+
+### Not run here (requires user's machine)
+- Real OAuth consent + real ARFADA Google sources: must be run by the user with
+  `connect_google.py` + authorized `client_secret.json` + `arfada_sources.yaml`
+  (browser + credentials unavailable in this build env). Static-vs-live comparison
+  and CV-folder validation run against real data once connected.
+
+### Tests: 212/212 (31 new Phase 4.1, mocked Google). No Anthropic API, no VPS, no MCP.
+
+---
+
 ## [0.5.0] — 2026-11-10
 
 ### Added — Phase 4 Verified Knowledge + Assignment Type + Professional DOCX

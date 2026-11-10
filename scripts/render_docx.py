@@ -57,6 +57,17 @@ def main(argv=None) -> int:
         i = args.index("--logo")
         if i + 1 < len(args):
             logo = args[i + 1]
+    # auto-resolve brand logo from the live Google cache if not supplied (spec §15).
+    if not logo:
+        try:
+            from engine.tor.gknowledge.cache import Cache
+            brand = Cache().brand()
+            if brand and brand.get("available") and brand.get("logo_path"):
+                lp = Path(brand["logo_path"])
+                if lp.exists():
+                    logo = str(lp)
+        except Exception:
+            logo = None  # fall back to neutral cover — never block export
 
     # pre-export QA
     qa = preexport_check(run_dir)

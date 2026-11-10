@@ -1,0 +1,38 @@
+# ARFADA knowledge source configuration (IDs only — NEVER credentials).
+#
+# Copy to one of:
+#   - %USERPROFILE%/.arfada-proposal/config/arfada_sources.yaml  (per-user), or
+#   - config/arfada_sources.yaml in this private repo              (team-shared)
+# and fill in the real Google IDs. Folder/sheet IDs are not secrets in the
+# credential sense; OAuth tokens/client secrets are and NEVER go here.
+
+# Master Project Tracker — authoritative operational project dataset.
+projects:
+  type: google_sheet
+  spreadsheet_id: "REPLACE_WITH_SHEET_ID"
+  sheet_name: "Master Tracker"       # tab name (or "" for the first tab)
+  # Optional explicit mapping (field: exact header text). Omit to auto-detect.
+  # column_map:
+  #   project_name: "Project Title"
+  #   assignment_type: "Type"
+  #   country: "Country"
+  #   client: "Client"
+  #   surveys: "Surveys"
+  #   kii: "KIIs"
+  #   fgd: "FGDs"
+
+# Staff CVs — Drive folder hierarchy (optionally one subfolder per country).
+staff:
+  type: google_drive_folder
+  folder_id: "REPLACE_WITH_FOLDER_ID"
+  subfolders_by_country: true
+
+# Company documents — profile, registrations, policies.
+company:
+  type: google_drive_folder
+  folder_id: "REPLACE_WITH_FOLDER_ID"
+
+# Brand assets — official logo/template folder (authorized use only).
+brand:
+  type: google_drive_folder
+  folder_id: "REPLACE_WITH_FOLDER_ID"

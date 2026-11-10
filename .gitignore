@@ -7,6 +7,23 @@
 credentials.json
 *service-account*.json
 
+# Google OAuth material — NEVER commit (tokens, client secrets)
+client_secret*.json
+token.json
+*oauth*token*
+.arfada-proposal/
+
+# Live knowledge cache + downloaded CVs (user-local; never committed)
+# (cache lives under ~/.arfada-proposal/, already excluded above; these guard
+#  against an accidental in-repo copy)
+knowledge_cache/
+**/staff_index.json
+**/source_state.json
+
+# The team-shared source manifest may be committed (IDs only); the real one is
+# arfada_sources.yaml — keep ONLY the .example in Git by default.
+config/arfada_sources.yaml
+
 # Proposal and TOR data — confidential client material
 tors/
 proposals/

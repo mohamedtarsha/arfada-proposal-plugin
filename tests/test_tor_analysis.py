@@ -9,6 +9,7 @@ or:
 from __future__ import annotations
 
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -17,6 +18,11 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
+
+# Isolate ARFADA user-local home for the whole test session so tests never read
+# or write a real Google cache / token. Deterministic static-fallback by default.
+import tempfile as _tf
+os.environ.setdefault("ARFADA_HOME", _tf.mkdtemp(prefix="arfada_test_home_"))
 
 FIXTURES = _ROOT / "tests" / "fixtures"
 EN_DOCX = FIXTURES / "synthetic_en.docx"
@@ -2290,6 +2296,438 @@ class TestNoProviderAPIPhase4(unittest.TestCase):
             txt = Path(py).read_text(encoding="utf-8")
             if "import anthropic" in txt or "anthropic.Anthropic" in txt \
                     or "ANTHROPIC_API_KEY" in txt:
+                offenders.append(py)
+        self.assertEqual(offenders, [])
+
+
+# ===========================================================================
+# Phase 4.1 tests: Live Google Knowledge Connector (mocked Google, no creds)
+# ===========================================================================
+
+class _FakeSheets:
+    def __init__(self, rows):
+        self.rows = rows
+    def read(self, spreadsheet_id, sheet_name):
+        return self.rows
+
+
+class _FakeDrive:
+    def __init__(self, folders=None, files_bytes=None):
+        self.folders = folders or {}
+        self.files_bytes = files_bytes or {}
+    def list_folder(self, folder_id):
+        return self.folders.get(folder_id, [])
+    def download(self, file_id):
+        return self.files_bytes.get(file_id, b"")
+
+
+def _isolated_home():
+    """Fresh ARFADA_HOME for a test (patched into env, restored by caller)."""
+    import tempfile
+    return tempfile.mkdtemp(prefix="arfada_home_")
+
+
+class _HomeIsolation:
+    """Context manager: point ARFADA_HOME at a fresh dir for cache isolation."""
+    def __enter__(self):
+        import tempfile
+        self._prev = os.environ.get("ARFADA_HOME")
+        os.environ["ARFADA_HOME"] = tempfile.mkdtemp(prefix="arfada_home_")
+        return os.environ["ARFADA_HOME"]
+    def __exit__(self, *a):
+        if self._prev is not None:
+            os.environ["ARFADA_HOME"] = self._prev
+
+
+_SAMPLE_ROWS = [
+    ["Project Name", "Type", "Country", "Client", "Surveys", "KIIs", "FGDs"],
+    ["Resilience Eval", "Evaluation", "Lebanon", "Oxfam", "1,200", "30", "6"],
+    ["Needs Assessment X", "Needs Assessment", "Syria", "IRC", "800", "20", "4"],
+    ["Market Study", "Market Assessment", "Jordan", "ACTED", "", "15", ""],
+]
+
+
+class TestGoogleConfigAndAuth(unittest.TestCase):
+
+    def test_no_tokens_in_repo(self):
+        """No OAuth token/secret committed anywhere in the repo tree."""
+        import glob
+        bad = []
+        for pat in ("token.json", "client_secret*.json"):
+            bad += glob.glob(str(_ROOT / "**" / pat), recursive=True)
+        # allow nothing
+        self.assertEqual(bad, [], f"OAuth material present in repo: {bad}")
+
+    def test_paths_outside_repo(self):
+        with _HomeIsolation():
+            from engine.tor.gknowledge.paths import token_path, user_cache_dir
+            self.assertNotIn(str(_ROOT), str(token_path()))
+            self.assertNotIn(str(_ROOT), str(user_cache_dir()))
+
+    def test_source_config_loads_example(self):
+        from engine.tor.gknowledge.config import load_sources
+        # with no user config, falls back to repo config (example not auto-loaded
+        # unless named arfada_sources.yaml) — just assert no crash + dataclass shape
+        sc = load_sources()
+        self.assertTrue(hasattr(sc, "projects"))
+
+    def test_not_connected_by_default(self):
+        with _HomeIsolation():
+            from engine.tor.gknowledge import auth
+            self.assertFalse(auth.is_connected())
+
+
+class TestProjectNormalization(unittest.TestCase):
+
+    def test_normalize_projects(self):
+        from engine.tor.gknowledge.normalize import normalize_projects
+        projs = normalize_projects(_SAMPLE_ROWS, sheet_name="T", spreadsheet_id="s1")
+        self.assertEqual(len(projs), 3)
+        self.assertEqual(projs[0]["assignment_type"], "EVALUATION")
+        self.assertEqual(projs[0]["country"], "Lebanon")
+        self.assertEqual(projs[0]["surveys"], 1200)  # comma stripped
+
+    def test_empty_cells_not_invented(self):
+        from engine.tor.gknowledge.normalize import normalize_projects
+        projs = normalize_projects(_SAMPLE_ROWS, spreadsheet_id="s1")
+        market = next(p for p in projs if p["client"] == "ACTED")
+        self.assertIsNone(market["surveys"])   # blank → None, not 0 or invented
+        self.assertIsNone(market["fgd"])
+
+    def test_provenance_present(self):
+        from engine.tor.gknowledge.normalize import normalize_projects
+        projs = normalize_projects(_SAMPLE_ROWS, sheet_name="T", spreadsheet_id="s1")
+        for p in projs:
+            self.assertIn("source_row", p)
+            self.assertEqual(p["source_spreadsheet_id"], "s1")
+
+    def test_metrics_aggregation(self):
+        from engine.tor.gknowledge.normalize import normalize_projects, compute_metrics
+        projs = normalize_projects(_SAMPLE_ROWS, spreadsheet_id="s1")
+        m = compute_metrics(projs)
+        self.assertEqual(m["total_projects"]["value"], 3)
+        self.assertEqual(m["total_surveys"]["value"], 2000)   # 1200+800 (+blank)
+        self.assertEqual(m["total_kii"]["value"], 65)          # 30+20+15
+        self.assertEqual(m["total_fgd"]["value"], 10)          # 6+4
+        self.assertEqual(m["countries"]["value"], 3)
+
+
+class TestSyncAndCache(unittest.TestCase):
+
+    def _run(self, rows=None, folders=None, files_bytes=None):
+        from engine.tor.gknowledge.cache import Cache
+        from engine.tor.gknowledge import sync as S
+        from engine.tor.gknowledge.config import SourceConfig
+        srcs = SourceConfig(
+            projects={"type": "google_sheet", "spreadsheet_id": "s1", "sheet_name": "T"},
+            staff={"type": "google_drive_folder", "folder_id": "staff_root",
+                   "subfolders_by_country": True} if folders else {})
+        cache = Cache()
+        rep = S.run_sync(sources=srcs,
+                         drive=_FakeDrive(folders, files_bytes) if folders else None,
+                         sheets=_FakeSheets(rows or _SAMPLE_ROWS), cache=cache)
+        return cache, rep
+
+    def test_sync_projects(self):
+        with _HomeIsolation():
+            cache, rep = self._run()
+            self.assertTrue(rep["ok"])
+            self.assertEqual(rep["projects"]["normalized"], 3)
+            self.assertEqual(cache.projects()["metrics"]["total_surveys"]["value"], 2000)
+
+    def test_incremental_unchanged(self):
+        with _HomeIsolation():
+            folders = {"staff_root": [
+                {"id": "cv1", "name": "A CV.pdf", "mimeType": "application/pdf",
+                 "modifiedTime": "2026-11-01T00:00:00Z"}]}
+            cache, rep1 = self._run(folders=folders, files_bytes={"cv1": b""})
+            self.assertEqual(rep1["staff"]["added"], 1)
+            # second sync, same modifiedTime → unchanged
+            cache, rep2 = self._run(folders=folders, files_bytes={"cv1": b""})
+            self.assertEqual(rep2["staff"]["unchanged"], 1)
+            self.assertEqual(rep2["staff"]["added"], 0)
+
+    def test_deleted_file_removed(self):
+        with _HomeIsolation():
+            folders = {"staff_root": [
+                {"id": "cv1", "name": "A CV.pdf", "mimeType": "application/pdf",
+                 "modifiedTime": "2026-11-01T00:00:00Z"}]}
+            cache, _ = self._run(folders=folders, files_bytes={"cv1": b""})
+            # now the folder is empty → file deleted
+            cache, rep = self._run(folders={"staff_root": []})
+            self.assertEqual(rep["staff"]["removed"], 1)
+            self.assertEqual(len(cache.staff()["profiles"]), 0)
+
+    def test_transactional_failure_keeps_cache(self):
+        with _HomeIsolation():
+            cache, _ = self._run()  # good cache exists
+            before = cache.projects()["metrics"]["total_surveys"]["value"]
+            # a sheet client that raises
+            from engine.tor.gknowledge import sync as S
+            from engine.tor.gknowledge.config import SourceConfig
+            class Boom:
+                def read(self, *a): raise RuntimeError("network down")
+            srcs = SourceConfig(projects={"type": "google_sheet", "spreadsheet_id": "s1",
+                                          "sheet_name": "T"})
+            rep = S.run_sync(sources=srcs, drive=None, sheets=Boom(), cache=cache)
+            self.assertFalse(rep["ok"])
+            # previous cache intact
+            self.assertEqual(cache.projects()["metrics"]["total_surveys"]["value"], before)
+
+    def test_cache_freshness(self):
+        with _HomeIsolation():
+            cache, _ = self._run()
+            age = cache.age_hours()
+            self.assertIsNotNone(age)
+            self.assertLess(age, 1.0)
+
+
+class TestLiveKnowledgeSource(unittest.TestCase):
+
+    def test_live_overrides_static(self):
+        with _HomeIsolation():
+            from engine.tor.gknowledge.cache import Cache
+            from engine.tor.gknowledge import sync as S
+            from engine.tor.gknowledge.config import SourceConfig
+            S.run_sync(sources=SourceConfig(projects={"type": "google_sheet",
+                       "spreadsheet_id": "s1", "sheet_name": "T"}),
+                       drive=None, sheets=_FakeSheets(_SAMPLE_ROWS), cache=Cache())
+            from engine.tor.knowledge import Knowledge
+            k = Knowledge()
+            self.assertEqual(k.source_mode, "LIVE_GOOGLE")
+            self.assertEqual(k.metric("total_surveys")["value"], 2000)
+
+    def test_static_fallback_labeled(self):
+        with _HomeIsolation():
+            from engine.tor.knowledge import Knowledge
+            k = Knowledge()
+            self.assertEqual(k.source_mode, "STATIC_FALLBACK")
+
+    def test_static_fallback_value(self):
+        with _HomeIsolation():
+            from engine.tor.knowledge import Knowledge
+            k = Knowledge()
+            self.assertEqual(k.metric("total_kii")["value"], 2558)
+
+
+class TestStaffMatching(unittest.TestCase):
+
+    def _staff_cache(self, home):
+        from engine.tor.gknowledge.cache import Cache
+        c = Cache()
+        c.write_staff([
+            {"staff_id": "s1", "name": "Jane", "country": "Lebanon",
+             "roles": ["Team Leader", "Evaluator"], "years_experience": 12,
+             "languages": ["English", "Arabic"], "source_file_id": "f1"},
+            {"staff_id": "s2", "name": "Omar", "country": "Jordan",
+             "roles": ["Enumerator"], "years_experience": 3,
+             "languages": ["Arabic"], "source_file_id": "f2"},
+        ], {"type": "google_drive_folder", "folder_id": "x"})
+        return c
+
+    def test_hard_min_years_filter(self):
+        with _HomeIsolation() as home:
+            self._staff_cache(home)
+            from engine.tor.knowledge import Knowledge
+            k = Knowledge()
+            cands = k.search_staff(min_years=10)
+            self.assertEqual(len(cands), 1)
+            self.assertEqual(cands[0]["name"], "Jane")
+
+    def test_soft_ranking(self):
+        with _HomeIsolation() as home:
+            self._staff_cache(home)
+            from engine.tor.knowledge import Knowledge
+            k = Knowledge()
+            cands = k.search_staff(role="Team Leader", country="Lebanon")
+            self.assertEqual(cands[0]["name"], "Jane")
+
+    def test_staff_not_auto_approved(self):
+        with _HomeIsolation() as home:
+            self._staff_cache(home)
+            from engine.tor.knowledge import Knowledge
+            k = Knowledge()
+            for c in k.search_staff():
+                self.assertFalse(c["approved"])
+
+
+class TestCVNormalization(unittest.TestCase):
+
+    def test_cv_profile_fields(self):
+        from engine.tor.gknowledge.normalize import normalize_cv
+        text = ("Jane Smith. Team Leader with 12 years experience in evaluation. "
+                "MSc in Development. Languages: English, Arabic.")
+        p = normalize_cv(text=text, file_id="f1", file_name="Jane Smith CV.pdf",
+                         country="Lebanon")
+        self.assertEqual(p["years_experience"], 12)
+        self.assertIn("English", p["languages"])
+        self.assertTrue(p["education"])
+        self.assertIn("staff_id", p)
+        self.assertEqual(p["country"], "Lebanon")
+
+    def test_cv_evidence_preserved(self):
+        from engine.tor.gknowledge.normalize import normalize_cv
+        p = normalize_cv(text="10 years experience in M&E.", file_id="f1",
+                         file_name="cv.pdf")
+        self.assertTrue(p["evidence"]["years_experience"])
+
+    def test_cv_arabic_preserved(self):
+        from engine.tor.gknowledge.normalize import normalize_cv
+        p = normalize_cv(text="خبرة 8 سنوات في التقييم. اللغات: العربية والإنجليزية.",
+                         file_id="f1", file_name="سيرة.pdf", country="Syria")
+        # name guess keeps unicode; no crash
+        self.assertIn("staff_id", p)
+
+
+class TestKnowledgeSnapshot(unittest.TestCase):
+
+    def _live_cache(self):
+        from engine.tor.gknowledge.cache import Cache
+        from engine.tor.gknowledge import sync as S
+        from engine.tor.gknowledge.config import SourceConfig
+        S.run_sync(sources=SourceConfig(projects={"type": "google_sheet",
+                   "spreadsheet_id": "s1", "sheet_name": "T"}),
+                   drive=None, sheets=_FakeSheets(_SAMPLE_ROWS), cache=Cache())
+        return Cache()
+
+    def test_snapshot_created_with_manifest(self):
+        import tempfile
+        with _HomeIsolation():
+            cache = self._live_cache()
+            from engine.tor.gknowledge import snapshot as SN
+            run_dir = Path(tempfile.mkdtemp())
+            man = SN.create_snapshot(run_dir, cache=cache)
+            self.assertEqual(man["source_mode"], "LIVE_GOOGLE")
+            self.assertIn("snapshot_id", man)
+            self.assertTrue(SN.snapshot_exists(run_dir))
+
+    def test_snapshot_immutable(self):
+        import tempfile
+        with _HomeIsolation():
+            cache = self._live_cache()
+            from engine.tor.gknowledge import snapshot as SN, sync as S
+            from engine.tor.gknowledge.config import SourceConfig
+            run_dir = Path(tempfile.mkdtemp())
+            SN.create_snapshot(run_dir, cache=cache)
+            before = SN.snapshot_metrics(run_dir)["total_surveys"]["value"]
+            # change live data
+            rows = _SAMPLE_ROWS + [["Extra", "Evaluation", "Iraq", "GIZ", "9999", "1", "1"]]
+            S.run_sync(sources=SourceConfig(projects={"type": "google_sheet",
+                       "spreadsheet_id": "s1", "sheet_name": "T"}),
+                       drive=None, sheets=_FakeSheets(rows), cache=cache)
+            after = SN.snapshot_metrics(run_dir)["total_surveys"]["value"]
+            self.assertEqual(before, after, "snapshot must not change when live data changes")
+
+    def test_snapshot_static_fallback(self):
+        import tempfile
+        with _HomeIsolation():
+            from engine.tor.gknowledge import snapshot as SN
+            run_dir = Path(tempfile.mkdtemp())
+            man = SN.create_snapshot(run_dir)  # no live cache
+            self.assertEqual(man["source_mode"], "STATIC_FALLBACK")
+
+    def test_knowledge_reads_snapshot(self):
+        import tempfile
+        with _HomeIsolation():
+            cache = self._live_cache()
+            from engine.tor.gknowledge import snapshot as SN
+            run_dir = Path(tempfile.mkdtemp())
+            SN.create_snapshot(run_dir, cache=cache)
+            from engine.tor.knowledge import Knowledge
+            k = Knowledge(run_dir=run_dir)
+            self.assertEqual(k.source_mode, "LIVE_GOOGLE")
+            self.assertEqual(k.metric("total_surveys")["value"], 2000)
+
+    def test_cross_run_snapshot_isolation(self):
+        import tempfile
+        with _HomeIsolation():
+            cache = self._live_cache()
+            from engine.tor.gknowledge import snapshot as SN, sync as S
+            from engine.tor.gknowledge.config import SourceConfig
+            run_a = Path(tempfile.mkdtemp())
+            SN.create_snapshot(run_a, cache=cache)
+            # change data, new run
+            rows = _SAMPLE_ROWS + [["Extra", "Evaluation", "Iraq", "GIZ", "1000", "1", "1"]]
+            S.run_sync(sources=SourceConfig(projects={"type": "google_sheet",
+                       "spreadsheet_id": "s1", "sheet_name": "T"}),
+                       drive=None, sheets=_FakeSheets(rows), cache=cache)
+            run_b = Path(tempfile.mkdtemp())
+            SN.create_snapshot(run_b, cache=cache)
+            a = SN.snapshot_metrics(run_a)["total_surveys"]["value"]
+            b = SN.snapshot_metrics(run_b)["total_surveys"]["value"]
+            self.assertNotEqual(a, b, "two runs must freeze different data")
+
+
+class TestOfflineMode(unittest.TestCase):
+
+    def test_offline_uses_cache(self):
+        with _HomeIsolation():
+            from engine.tor.gknowledge.cache import Cache
+            from engine.tor.gknowledge import sync as S
+            from engine.tor.gknowledge.config import SourceConfig
+            S.run_sync(sources=SourceConfig(projects={"type": "google_sheet",
+                       "spreadsheet_id": "s1", "sheet_name": "T"}),
+                       drive=None, sheets=_FakeSheets(_SAMPLE_ROWS), cache=Cache())
+            # not connected (no token) → offline, but cache present
+            from engine.tor.gknowledge import auth
+            self.assertFalse(auth.is_connected())
+            from engine.tor.knowledge import Knowledge
+            k = Knowledge()
+            self.assertEqual(k.source_mode, "LIVE_GOOGLE")  # cache usable offline
+
+
+class TestNumericClaimSource(unittest.TestCase):
+
+    def test_numeric_claim_traces_to_snapshot(self):
+        """A generated org number must match a snapshot metric fact value."""
+        import tempfile
+        with _HomeIsolation():
+            from engine.tor.gknowledge.cache import Cache
+            from engine.tor.gknowledge import sync as S, snapshot as SN
+            from engine.tor.gknowledge.config import SourceConfig
+            S.run_sync(sources=SourceConfig(projects={"type": "google_sheet",
+                       "spreadsheet_id": "s1", "sheet_name": "T"}),
+                       drive=None, sheets=_FakeSheets(_SAMPLE_ROWS), cache=Cache())
+            run_dir = Path(tempfile.mkdtemp())
+            SN.create_snapshot(run_dir, cache=Cache())
+            from engine.tor.knowledge import Knowledge
+            from engine.tor.generation import validate_candidate, _verified_fact_values
+            k = Knowledge(run_dir=run_dir)
+            facts = k.facts_for_section("CONTEXT")
+            vals = _verified_fact_values(facts)
+            # live surveys total 2000 must be claimable
+            self.assertIn("2000", vals)
+            packet = {"section_id": "CONTEXT", "mandatory_slots": [],
+                      "applied_decisions": [], "verified_arfada_facts": facts,
+                      "needs_arfada_evidence": False}
+            cand = {"section_id": "CONTEXT",
+                    "blocks": [{"block_id": "c1", "type": "paragraph",
+                                "text": "ARFADA has completed 2000 surveys across its portfolio."}],
+                    "requirement_response_ledger": []}
+            v = validate_candidate(packet, cand)
+            self.assertTrue(v["valid"], f"errors: {v['errors']}")
+
+
+class TestNoVPSNoMCP(unittest.TestCase):
+
+    def test_no_vps_mcp_server_deps(self):
+        """gknowledge must not import server/web frameworks."""
+        import glob
+        banned = ("fastapi", "uvicorn", "flask", "caddy")
+        offenders = []
+        for py in glob.glob(str(_ROOT / "engine" / "tor" / "gknowledge" / "*.py")):
+            txt = Path(py).read_text(encoding="utf-8").lower()
+            for b in banned:
+                if f"import {b}" in txt or f"from {b}" in txt:
+                    offenders.append((py, b))
+        self.assertEqual(offenders, [])
+
+    def test_no_anthropic_in_gknowledge(self):
+        import glob
+        offenders = []
+        for py in glob.glob(str(_ROOT / "engine" / "tor" / "gknowledge" / "*.py")):
+            txt = Path(py).read_text(encoding="utf-8")
+            if "import anthropic" in txt or "ANTHROPIC_API_KEY" in txt:
                 offenders.append(py)
         self.assertEqual(offenders, [])
 

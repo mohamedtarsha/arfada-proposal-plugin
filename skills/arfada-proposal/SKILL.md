@@ -4,15 +4,15 @@ description: >
   ARFADA Proposal Assistant — TOR analysis, human decision review, controlled
   draft generation, and professional Word export for ARFADA team members. Invoke
   with /arfada-proposal to analyze a TOR, review decisions, generate, or export.
-version: 0.5.0
+version: 0.5.1
 trigger: /arfada-proposal
 ---
 
 # ARFADA Proposal Assistant
 
-**Plugin version:** 0.5.0
+**Plugin version:** 0.5.1
 **Publisher:** ARFADA
-**Status:** Phase 4 — Verified Knowledge + Professional DOCX active
+**Status:** Phase 4.1 — Live Google Knowledge + Professional DOCX active
 
 ---
 
@@ -21,20 +21,87 @@ trigger: /arfada-proposal
 When invoked without context, print:
 
 ```
-ARFADA Proposal Assistant v0.5.0
+ARFADA Proposal Assistant v0.5.1
 
 Available now:
   1. Analyze TOR               — provide a .pdf or .docx file
   2. Review Proposal Decisions — review and record proposal choices
-  3. Generate Proposal Draft   — build a TOR-grounded draft section by section
-  4. Export Word               — professional DOCX (internal review / client draft)
+  3. Refresh ARFADA Knowledge  — sync live data from Google Workspace
+  4. Generate Proposal Draft   — build a TOR-grounded draft section by section
+  5. Export Word               — professional DOCX (internal review / client draft)
 
 Coming later:
-  5. Final Quality Review
+  6. Final Quality Review
+
+Also: "ARFADA Knowledge Status"
 ```
 
 If a run directory is already in context (from previous analysis), offer the
 relevant next step with `[run: <run_id>]`.
+
+---
+
+## ARFADA Knowledge (live Google Workspace — local only)
+
+ARFADA operational data (Master Tracker, staff CVs, company docs, brand) lives in
+**Google Workspace** and is the live source of truth. The connector runs **locally**
+(OAuth desktop flow) — no VPS, no MCP server, no Anthropic API. The static
+`knowledge/` snapshot is an explicit **STATIC_FALLBACK** only.
+
+### Connect (one-time, per machine)
+```bash
+python "<plugin_root>/scripts/connect_google.py"
+```
+Opens the browser for read-only Drive + Sheets consent. Tokens are stored under
+`%USERPROFILE%/.arfada-proposal/` — never in the repo, never printed. Requires a
+desktop-app `client_secret.json` and `arfada_sources.yaml` (see
+`config/arfada_sources.example.yaml`).
+
+### Status
+```bash
+python "<plugin_root>/scripts/knowledge_status.py"
+```
+Shows: Google connected, source_mode (LIVE_GOOGLE / LIVE_GOOGLE_OFFLINE_CACHE /
+STATIC_FALLBACK), last sync, freshness (FRESH <24h / WARNING 1–7d / STALE >7d),
+project+staff counts, and the static fallback version.
+
+### Refresh (incremental, transactional)
+```bash
+python "<plugin_root>/scripts/sync_google_knowledge.py"
+```
+Pulls only new/changed Sheet rows + Drive files; a failed sync keeps the previous
+valid cache. Report lists added/updated/unchanged/removed.
+
+### Staleness policy (before generation)
+Run `knowledge_status.py`. If `freshness` is STALE (> 7 days), tell the user:
+> "ARFADA knowledge was last synchronized X days ago. Refresh before generating?"
+Do not silently use very stale data. If never connected, say:
+> "ARFADA KNOWLEDGE SOURCE: STATIC FALLBACK — recommend connecting Google."
+
+### Offline
+If Google is unreachable but a cache exists, proceed in OFFLINE KNOWLEDGE MODE
+(state the last sync time); the run snapshot records it was created offline.
+
+### Show facts / experience used
+```bash
+python "<plugin_root>/scripts/query_knowledge.py" metrics
+python "<plugin_root>/scripts/query_knowledge.py" search --type EVALUATION --country Lebanon
+```
+
+### Proposal-time snapshot (automatic, immutable)
+`build_blueprint.py` freezes the relevant knowledge into
+`arfada-output/<run_id>/knowledge_snapshot/` with a manifest (snapshot_id,
+source_mode, google sync times, revisions, plugin_version). That run then uses its
+**frozen** snapshot — Google changes mid-run do NOT leak in. To pull refreshed data
+into an existing run, explicitly re-create the snapshot (force) and regenerate
+affected sections.
+
+### Staff (personnel) — suggestions only
+`knowledge.search_staff(country, role, min_years, language)` returns candidate CVs
+(hard qualification constraints filter; soft factors rank). **Suggested ≠ approved.**
+If the TOR needs named staff, present candidates, let the user choose, and record
+the approved `staff_id` in the Decision Register before generation uses that
+person's verified facts. Never invent staff names — use "To be nominated".
 
 ---
 

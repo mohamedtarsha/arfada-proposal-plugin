@@ -3,9 +3,19 @@
 A Claude Code plugin for ARFADA staff. Brings structured TOR analysis and
 proposal drafting into Claude Code — distributed privately via GitHub.
 
-> **Status:** Phase 4 — TOR Analysis + Decision Review + Controlled Generation +
-> Verified Knowledge + Professional Word export.
+> **Status:** Phase 4.1 — TOR Analysis + Decision Review + Controlled Generation +
+> **Live Google Workspace knowledge** + Professional Word export.
 > Final quality review planned for a later phase.
+
+### Live ARFADA knowledge (v0.5.1)
+
+ARFADA operational data (Master Tracker, staff CVs, company docs, brand) is read
+**live from Google Workspace** via a **local** OAuth connector — no VPS, no MCP
+server, no Anthropic API. The static `knowledge/` snapshot is an explicit
+**STATIC_FALLBACK**. Each proposal run freezes an **immutable knowledge snapshot**
+so generation is reproducible. Setup: `connect_google.py` (one-time browser
+consent) → `sync_google_knowledge.py` → generate. Tokens/credentials never touch
+the repo. See SKILL "ARFADA Knowledge" for the full workflow.
 
 ---
 

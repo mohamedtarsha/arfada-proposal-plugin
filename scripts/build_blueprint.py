@@ -98,6 +98,25 @@ def main(argv=None) -> int:
     bp_dict = blueprint_to_dict(bp)
     atomic_write_json(run_dir / "proposal_blueprint.json", bp_dict)
 
+    # --- freeze the proposal-time knowledge snapshot (Phase 4.1, spec §21) ---
+    # Generation begins now; freeze live-Google (or static-fallback) knowledge so
+    # the whole run uses one immutable snapshot. Idempotent (won't overwrite).
+    snapshot_info = {}
+    try:
+        from engine.tor.gknowledge import snapshot as _snap
+        from engine.tor.gknowledge import auth as _auth
+        offline = not _auth.is_connected()
+        manifest = _snap.create_snapshot(run_dir, plugin_version="0.5.1", offline=offline)
+        snapshot_info = {
+            "snapshot_id": manifest.get("snapshot_id"),
+            "source_mode": manifest.get("source_mode"),
+            "google_last_sync": manifest.get("google_last_sync"),
+            "projects_count": manifest.get("projects_count"),
+            "static_knowledge_version": manifest.get("static_knowledge_version"),
+        }
+    except Exception as e:
+        snapshot_info = {"source_mode": "STATIC_FALLBACK", "snapshot_error": str(e)}
+
     # generation status
     status = init_status(bp_dict, register)
     atomic_write_json(run_dir / "generation_status.json", status)
@@ -114,6 +133,7 @@ def main(argv=None) -> int:
         "assignment_type_label": bp.assignment_type_label,
         "framework_section": bp.framework_section,
         "knowledge_version": bp.knowledge_version,
+        "knowledge_snapshot": snapshot_info,
         "blueprint": {
             "sections": bp.coverage["sections"],
             "total_bidder_requirements": bp.coverage["total_bidder_requirements"],

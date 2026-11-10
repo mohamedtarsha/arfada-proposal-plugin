@@ -83,9 +83,11 @@ def main(argv=None) -> int:
         for k in ("assignment", "client", "country")
     }
 
-    # verified ARFADA knowledge facts relevant to this section (Phase 4)
+    # verified ARFADA knowledge facts relevant to this section (Phase 4 / 4.1).
+    # Knowledge(run_dir) uses the FROZEN proposal snapshot (live Google or static
+    # fallback) — immutable for the duration of this run.
     from engine.tor.knowledge import Knowledge
-    kb = Knowledge()
+    kb = Knowledge(run_dir=run_dir)
     country = assignment_metadata.get("country", "")
     verified_facts = kb.facts_for_section(
         section_id, assignment_type=blueprint.get("assignment_type", ""),
