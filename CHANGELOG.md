@@ -6,6 +6,67 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.4.0] — 2026-11-10
+
+### Added — Phase 3 Controlled Proposal Generation
+
+**Architectural rule:** the active Claude Code session is the generator. NO separate
+Anthropic API, NO ANTHROPIC_API_KEY, NO provider client. Python is deterministic
+plumbing; the session writes content against bounded packets. (Two tests assert the
+absence of any Anthropic/provider usage in engine + scripts.)
+
+**New: `engine/tor/blueprint.py`** (deterministic, PE5-A lineage, plugin-native)
+- Assignment-aware section set (16-section taxonomy, canonical ordering)
+- Requirement ownership: each bidder requirement → exactly ONE owning section (no double-count)
+- Response slots: one per bidder requirement, with response mode + minimum expectation
+- Decision dependencies propagated from the Decision Register
+- CLIENT requirements never produce slots; TEAM/EXPERIENCE flagged needs-evidence
+
+**New: `engine/tor/generation.py`** (deterministic)
+- `build_packet()` — bounded, section-scoped generation packet (only relevant context):
+  purpose, owned requirements, mandatory slots, applied decisions (resolved values +
+  deferrals), allowed facts, forbidden fact categories, output contract, writing guidance
+- Block schema: paragraph | bullet_list | numbered_list | table | evidence_placeholder
+- `validate_candidate()` — schema, duplicate/missing block_ids, table row width,
+  ledger→block linkage, mandatory-slot coverage, **approved decision value enforced
+  exactly** (writing 40 when 35 approved is a hard error), unsupported-ARFADA-fact
+  detection (requires NEEDS_ARFADA_EVIDENCE placeholder)
+- `build_repair_packet()` — narrow retry packet; max 2 repair attempts per section
+- Generation status + resume (`next_pending_section`, EXECUTIVE_SUMMARY always last)
+- Atomic JSON writes; `section_to_markdown()` renderer
+
+**New CLI scripts:**
+- `build_blueprint.py <run_dir>` — writes proposal_blueprint.json + generation_status.json
+  (validates run identity; rejects cross-TOR registers with exit 3)
+- `prepare_section.py <run_dir> <section_id>` — writes generation_packets/<section>.json
+- `validate_section.py <run_dir> <section_id> <candidate.json>` — validates + persists
+  generated_sections/<section>.{json,md}, or exit 4 + repair packet
+- `generation_status.py <run_dir> [--next]` — resume state
+- `assemble_draft.py <run_dir>` — proposal_draft.md + coverage report
+
+**New artifacts:**
+```
+proposal_blueprint.json, generation_status.json,
+generation_packets/<section>.json, generated_sections/<section>.{json,md},
+proposal_draft.md
+```
+
+**SKILL.md v0.4.0:** full Generate Proposal Draft workflow — session reads packet,
+writes structured candidate, validates, repairs (bounded), assembles. Partial
+generation allowed (blocked sections skipped). Menu now: Analyze TOR | Review
+Proposal Decisions | Generate Proposal Draft.
+
+### Validated (live, local)
+- NRC TOR (prescriptive, 0 decisions): 12-section blueprint, 66 requirements owned,
+  0 blocked; real DELIVERABLES table generated + validated READY; draft assembled
+- Synthetic TOR with decisions: KII resolved to 35, FGD to 7 → packet injects exact
+  values; METHODOLOGY generated with 35/7 passes; writing 40 is REJECTED (hard error)
+- Fixed-value protection, cross-TOR protection, resume, repair cap all verified
+
+### Tests: 145/145 (31 new Phase 3 tests). No Anthropic API.
+
+---
+
 ## [0.3.0] — 2026-11-07
 
 ### Added — Phase 2 Human Decision Review

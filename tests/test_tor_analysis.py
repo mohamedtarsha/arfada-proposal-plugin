@@ -1311,5 +1311,523 @@ class TestDecisionRegisterCLI(unittest.TestCase):
             self.assertEqual(r2.returncode, 0)
 
 
+# ===========================================================================
+# Phase 3 tests: Controlled Proposal Generation
+# ===========================================================================
+
+def _analyze_and_blueprint(src, tmp, with_decisions=False):
+    """Helper: analyze a TOR, optionally init+resolve decisions, build blueprint."""
+    from scripts.analyze_tor import analyze
+    from engine.tor import blueprint as bp_mod
+    import json as _json
+    result = analyze(src, tmp)
+    run_dir = Path(result["output_dir"])
+    register = None
+    if with_decisions:
+        from engine.tor.register import init_register, set_decision, save_register, next_open
+        reg = init_register(run_dir)
+        # resolve all numeric decisions to min+5, text decisions to a string
+        for e in reg.decisions:
+            if e.minimum is not None:
+                set_decision(reg, e.decision_id, int(e.minimum) + 5)
+            else:
+                set_decision(reg, e.decision_id, "proposed mixed-methods approach")
+        save_register(reg, run_dir)
+        register = _json.loads((run_dir / "decision_register.json").read_text(encoding="utf-8"))
+
+    tor = _json.loads((run_dir / "tor_analysis.json").read_text(encoding="utf-8"))
+    reqs = _json.loads((run_dir / "requirements.json").read_text(encoding="utf-8"))["requirements"]
+    bp = bp_mod.build_blueprint(
+        run_id=tor["run_id"], tor_identity=run_dir.name, assignment_type="evaluation",
+        language=tor.get("diagnostics", {}).get("language_detected", "english"),
+        created_at=tor.get("analyzed_at", ""),
+        requirements=reqs, fields_found=list(tor.get("metadata", {}).keys()),
+        decision_register=register,
+    )
+    return run_dir, bp, reqs, register
+
+
+class TestBlueprint(unittest.TestCase):
+
+    def test_blueprint_has_sections(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            _, bp, _, _ = _analyze_and_blueprint(EN_DOCX, tmp)
+            self.assertGreater(len(bp.sections), 3)
+
+    def test_section_ordering(self):
+        import tempfile
+        from engine.tor.blueprint import SECTION_ORDER
+        with tempfile.TemporaryDirectory() as tmp:
+            _, bp, _, _ = _analyze_and_blueprint(EN_DOCX, tmp)
+            seqs = [s.sequence for s in bp.sections]
+            self.assertEqual(seqs, sorted(seqs), "Sections must be in canonical order")
+
+    def test_executive_summary_present_first_in_order(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            _, bp, _, _ = _analyze_and_blueprint(EN_DOCX, tmp)
+            self.assertEqual(bp.sections[0].section_id, "EXECUTIVE_SUMMARY")
+
+    def test_requirement_ownership_no_double_count(self):
+        """Each bidder requirement owned by exactly one section."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            _, bp, reqs, _ = _analyze_and_blueprint(EN_DOCX, tmp)
+            owned = []
+            for s in bp.sections:
+                owned.extend(s.requirement_ids)
+            self.assertEqual(len(owned), len(set(owned)),
+                             "A requirement must not be owned by two sections")
+
+    def test_every_bidder_requirement_owned(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            _, bp, reqs, _ = _analyze_and_blueprint(EN_DOCX, tmp)
+            bidder = {r["req_id"] for r in reqs if r.get("actor") != "CLIENT"}
+            owned = set()
+            for s in bp.sections:
+                owned.update(s.requirement_ids)
+            self.assertTrue(bidder.issubset(owned),
+                            "Every bidder requirement must have an owning section")
+
+    def test_slots_match_bidder_requirements(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            _, bp, reqs, _ = _analyze_and_blueprint(EN_DOCX, tmp)
+            bidder = sum(1 for r in reqs if r.get("actor") != "CLIENT")
+            self.assertEqual(len(bp.slots), bidder)
+
+    def test_client_requirements_not_in_slots(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            _, bp, reqs, _ = _analyze_and_blueprint(AR_DOCX, tmp)
+            client_ids = {r["req_id"] for r in reqs if r.get("actor") == "CLIENT"}
+            slot_reqs = {s.requirement_id for s in bp.slots}
+            self.assertTrue(client_ids.isdisjoint(slot_reqs),
+                            "Client requirements must not produce response slots")
+
+    def test_team_section_needs_evidence(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            _, bp, _, _ = _analyze_and_blueprint(EN_DOCX, tmp)
+            team = next((s for s in bp.sections if s.section_id == "TEAM"), None)
+            if team:
+                self.assertTrue(team.needs_arfada_evidence)
+
+    def test_decision_dependency_propagation(self):
+        """Sections owning a requirement with a decision get that dependency."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir, bp, reqs, reg = _analyze_and_blueprint(EN_DOCX, tmp, with_decisions=False)
+            # init register WITHOUT resolving → decisions open
+            from engine.tor.register import init_register
+            import json as _json
+            init_register(run_dir)
+            register = _json.loads((run_dir / "decision_register.json").read_text(encoding="utf-8"))
+            tor = _json.loads((run_dir / "tor_analysis.json").read_text(encoding="utf-8"))
+            from engine.tor.blueprint import build_blueprint
+            bp2 = build_blueprint(
+                run_id=tor["run_id"], tor_identity=run_dir.name, assignment_type="evaluation",
+                language="english", created_at="", requirements=reqs,
+                fields_found=list(tor.get("metadata", {}).keys()), decision_register=register)
+            deps = [s for s in bp2.sections if s.decision_dependencies]
+            self.assertGreater(len(deps), 0, "At least one section should depend on a decision")
+
+
+class TestGenerationPackets(unittest.TestCase):
+
+    def test_packet_isolation(self):
+        """Packet for section X contains only X's requirements."""
+        import tempfile
+        from engine.tor.generation import build_packet
+        from engine.tor.blueprint import blueprint_to_dict
+        with tempfile.TemporaryDirectory() as tmp:
+            _, bp, reqs, reg = _analyze_and_blueprint(EN_DOCX, tmp, with_decisions=True)
+            bpd = blueprint_to_dict(bp)
+            req_by_id = {r["req_id"]: r for r in reqs}
+            meth = next(s for s in bpd["sections"] if s["section_id"] == "METHODOLOGY")
+            packet = build_packet(section=meth, slots=bpd["slots"],
+                                  requirements_by_id=req_by_id, decision_register=reg,
+                                  language="english", assignment_metadata={})
+            owned = {r["requirement_id"] for r in packet["owned_requirements"]}
+            self.assertEqual(owned, set(meth["requirement_ids"]))
+
+    def test_packet_has_forbidden_categories(self):
+        import tempfile
+        from engine.tor.generation import build_packet, FORBIDDEN_FACT_CATEGORIES
+        from engine.tor.blueprint import blueprint_to_dict
+        with tempfile.TemporaryDirectory() as tmp:
+            _, bp, reqs, reg = _analyze_and_blueprint(EN_DOCX, tmp)
+            bpd = blueprint_to_dict(bp)
+            sec = bpd["sections"][1]
+            packet = build_packet(section=sec, slots=bpd["slots"],
+                                  requirements_by_id={r["req_id"]: r for r in reqs},
+                                  decision_register=reg, language="english",
+                                  assignment_metadata={})
+            self.assertEqual(packet["forbidden_fact_categories"], FORBIDDEN_FACT_CATEGORIES)
+
+    def test_packet_injects_resolved_decision(self):
+        """Resolved numeric decision value appears in packet applied_decisions."""
+        import tempfile
+        from engine.tor.generation import build_packet
+        from engine.tor.blueprint import blueprint_to_dict
+        with tempfile.TemporaryDirectory() as tmp:
+            _, bp, reqs, reg = _analyze_and_blueprint(EN_DOCX, tmp, with_decisions=True)
+            bpd = blueprint_to_dict(bp)
+            req_by_id = {r["req_id"]: r for r in reqs}
+            # find a section with decision dependencies
+            sec = next((s for s in bpd["sections"] if s["decision_dependencies"]), None)
+            if sec is None:
+                self.skipTest("No section with decision dependencies")
+            packet = build_packet(section=sec, slots=bpd["slots"],
+                                  requirements_by_id=req_by_id, decision_register=reg,
+                                  language="english", assignment_metadata={})
+            resolved = [d for d in packet["applied_decisions"] if d["status"] == "RESOLVED"]
+            self.assertGreater(len(resolved), 0)
+
+
+class TestSectionValidation(unittest.TestCase):
+
+    def _packet(self, tmp, section_id="METHODOLOGY", with_decisions=False):
+        from engine.tor.generation import build_packet
+        from engine.tor.blueprint import blueprint_to_dict
+        _, bp, reqs, reg = _analyze_and_blueprint(EN_DOCX, tmp, with_decisions=with_decisions)
+        bpd = blueprint_to_dict(bp)
+        req_by_id = {r["req_id"]: r for r in reqs}
+        sec = next(s for s in bpd["sections"] if s["section_id"] == section_id)
+        return build_packet(section=sec, slots=bpd["slots"], requirements_by_id=req_by_id,
+                            decision_register=reg, language="english", assignment_metadata={})
+
+    def _valid_candidate(self, packet):
+        slots = packet["mandatory_slots"]
+        blocks = [{"block_id": "b1", "type": "paragraph",
+                   "text": "ARFADA proposes a rigorous, TOR-grounded approach that triangulates "
+                           "multiple evidence streams against each requirement and integrates "
+                           "findings through a shared analytical framework."}]
+        ledger = [{"slot_id": s["slot_id"], "requirement_id": s["requirement_id"],
+                   "block_ids": ["b1"], "response_summary": "addressed", "status": "ADDRESSED"}
+                  for s in slots]
+        return {"section_id": packet["section_id"], "blocks": blocks,
+                "requirement_response_ledger": ledger}
+
+    def test_valid_section_passes(self):
+        import tempfile
+        from engine.tor.generation import validate_candidate
+        with tempfile.TemporaryDirectory() as tmp:
+            packet = self._packet(tmp)
+            cand = self._valid_candidate(packet)
+            v = validate_candidate(packet, cand)
+            self.assertTrue(v["valid"], f"errors: {v['errors']}, failed: {v['failed_slots']}")
+
+    def test_missing_slot_detected(self):
+        import tempfile
+        from engine.tor.generation import validate_candidate
+        with tempfile.TemporaryDirectory() as tmp:
+            packet = self._packet(tmp)
+            cand = self._valid_candidate(packet)
+            if not cand["requirement_response_ledger"]:
+                self.skipTest("No slots in this section")
+            cand["requirement_response_ledger"] = cand["requirement_response_ledger"][:1]
+            v = validate_candidate(packet, cand)
+            if len(packet["mandatory_slots"]) > 1:
+                self.assertFalse(v["valid"])
+                self.assertGreater(len(v["failed_slots"]), 0)
+
+    def test_ledger_bad_block_ref_rejected(self):
+        import tempfile
+        from engine.tor.generation import validate_candidate
+        with tempfile.TemporaryDirectory() as tmp:
+            packet = self._packet(tmp)
+            cand = self._valid_candidate(packet)
+            if cand["requirement_response_ledger"]:
+                cand["requirement_response_ledger"][0]["block_ids"] = ["ghost"]
+                v = validate_candidate(packet, cand)
+                self.assertFalse(v["valid"])
+                self.assertTrue(any("missing block_id" in e for e in v["errors"]))
+
+    def test_table_validation_bad_rows(self):
+        import tempfile
+        from engine.tor.generation import validate_candidate
+        with tempfile.TemporaryDirectory() as tmp:
+            packet = self._packet(tmp)
+            cand = self._valid_candidate(packet)
+            cand["blocks"].append({"block_id": "t1", "type": "table",
+                                   "columns": ["A", "B"], "rows": [["only one cell"]]})
+            v = validate_candidate(packet, cand)
+            self.assertFalse(v["valid"])
+            self.assertTrue(any("cells" in e for e in v["errors"]))
+
+    def test_bullet_validation_empty(self):
+        import tempfile
+        from engine.tor.generation import validate_candidate
+        with tempfile.TemporaryDirectory() as tmp:
+            packet = self._packet(tmp)
+            cand = self._valid_candidate(packet)
+            cand["blocks"].append({"block_id": "x1", "type": "bullet_list", "items": []})
+            v = validate_candidate(packet, cand)
+            self.assertFalse(v["valid"])
+
+    def test_unsupported_arfada_fact_rejected(self):
+        import tempfile
+        from engine.tor.generation import validate_candidate
+        with tempfile.TemporaryDirectory() as tmp:
+            packet = self._packet(tmp)
+            cand = self._valid_candidate(packet)
+            cand["blocks"].append({"block_id": "bad", "type": "paragraph",
+                                   "text": "ARFADA has completed over 200 evaluations across "
+                                           "40 countries with extensive experience."})
+            # need a ledger slot or it still may pass; the fact check is independent
+            v = validate_candidate(packet, cand)
+            self.assertFalse(v["valid"])
+            self.assertTrue(any("ARFADA" in e for e in v["errors"]))
+
+    def test_evidence_placeholder_allows_arfada_mention(self):
+        import tempfile
+        from engine.tor.generation import validate_candidate, NEEDS_EVIDENCE_TAG
+        with tempfile.TemporaryDirectory() as tmp:
+            packet = self._packet(tmp)
+            cand = self._valid_candidate(packet)
+            cand["blocks"].append({"block_id": "ev", "type": "evidence_placeholder",
+                                   "text": f"{NEEDS_EVIDENCE_TAG}: ARFADA relevant experience "
+                                           "and comparable assignments"})
+            v = validate_candidate(packet, cand)
+            self.assertTrue(v["valid"], f"errors: {v['errors']}")
+
+    def test_approved_decision_value_enforced(self):
+        """Approved value 35 must appear; writing 40 instead is a hard error."""
+        import tempfile
+        from engine.tor.generation import validate_candidate
+        with tempfile.TemporaryDirectory() as tmp:
+            packet = self._packet(tmp, with_decisions=True)
+            # find a resolved numeric decision
+            numeric = [d for d in packet["applied_decisions"]
+                       if d["status"] == "RESOLVED" and isinstance(d.get("selected_value"), (int, float))
+                       and d.get("minimum") is not None]
+            if not numeric:
+                self.skipTest("No resolved numeric decision in this section")
+            approved = int(numeric[0]["selected_value"])
+            wrong = approved + 5
+            slots = packet["mandatory_slots"]
+            cand = {"section_id": packet["section_id"],
+                    "blocks": [{"block_id": "b1", "type": "paragraph",
+                                "text": f"ARFADA will conduct {wrong} interviews integrated "
+                                        "through a mixed-methods analytical framework aligned "
+                                        "to the TOR evaluation questions."}],
+                    "requirement_response_ledger": [
+                        {"slot_id": s["slot_id"], "requirement_id": s["requirement_id"],
+                         "block_ids": ["b1"], "response_summary": "x", "status": "ADDRESSED"}
+                        for s in slots]}
+            v = validate_candidate(packet, cand)
+            self.assertFalse(v["valid"], "Wrong decision value must be rejected")
+            self.assertTrue(any("approved decision value" in e for e in v["errors"]))
+
+    def test_approved_decision_value_present_passes(self):
+        """Writing the exact approved value passes."""
+        import tempfile
+        from engine.tor.generation import validate_candidate
+        with tempfile.TemporaryDirectory() as tmp:
+            packet = self._packet(tmp, with_decisions=True)
+            numeric = [d for d in packet["applied_decisions"]
+                       if d["status"] == "RESOLVED" and isinstance(d.get("selected_value"), (int, float))
+                       and d.get("minimum") is not None]
+            if not numeric:
+                self.skipTest("No resolved numeric decision in this section")
+            slots = packet["mandatory_slots"]
+            vals = " and ".join(str(int(d["selected_value"])) for d in numeric)
+            cand = {"section_id": packet["section_id"],
+                    "blocks": [{"block_id": "b1", "type": "paragraph",
+                                "text": f"ARFADA will conduct {vals} data collection activities "
+                                        "integrated through a mixed-methods analytical framework "
+                                        "aligned to the TOR evaluation questions."}],
+                    "requirement_response_ledger": [
+                        {"slot_id": s["slot_id"], "requirement_id": s["requirement_id"],
+                         "block_ids": ["b1"], "response_summary": "x", "status": "ADDRESSED"}
+                        for s in slots]}
+            v = validate_candidate(packet, cand)
+            self.assertTrue(v["valid"], f"errors: {v['errors']}")
+
+
+class TestGenerationStatusResume(unittest.TestCase):
+
+    def test_status_init_and_next(self):
+        import tempfile
+        from engine.tor.generation import init_status, next_pending_section
+        from engine.tor.blueprint import blueprint_to_dict
+        with tempfile.TemporaryDirectory() as tmp:
+            _, bp, _, reg = _analyze_and_blueprint(EN_DOCX, tmp, with_decisions=True)
+            status = init_status(blueprint_to_dict(bp), reg)
+            nxt = next_pending_section(status)
+            self.assertIsNotNone(nxt)
+            self.assertNotEqual(nxt, "EXECUTIVE_SUMMARY",
+                                "Executive summary must not be first")
+
+    def test_executive_summary_last(self):
+        import tempfile
+        from engine.tor.generation import init_status, set_section_status, next_pending_section
+        from engine.tor.blueprint import blueprint_to_dict
+        with tempfile.TemporaryDirectory() as tmp:
+            _, bp, _, reg = _analyze_and_blueprint(EN_DOCX, tmp, with_decisions=True)
+            status = init_status(blueprint_to_dict(bp), reg)
+            # mark all non-exec READY
+            for sid, s in status["sections"].items():
+                if sid != "EXECUTIVE_SUMMARY":
+                    set_section_status(status, sid, "READY")
+            nxt = next_pending_section(status)
+            self.assertEqual(nxt, "EXECUTIVE_SUMMARY")
+
+    def test_blocked_section_status(self):
+        import tempfile
+        from engine.tor.generation import init_status
+        from engine.tor.blueprint import blueprint_to_dict
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir, bp, reqs, _ = _analyze_and_blueprint(EN_DOCX, tmp)
+            # init register WITHOUT resolving → open decisions → blocked sections
+            from engine.tor.register import init_register
+            import json as _json
+            init_register(run_dir)
+            register = _json.loads((run_dir / "decision_register.json").read_text(encoding="utf-8"))
+            tor = _json.loads((run_dir / "tor_analysis.json").read_text(encoding="utf-8"))
+            from engine.tor.blueprint import build_blueprint
+            bp2 = build_blueprint(
+                run_id=tor["run_id"], tor_identity=run_dir.name, assignment_type="evaluation",
+                language="english", created_at="", requirements=reqs,
+                fields_found=list(tor.get("metadata", {}).keys()), decision_register=register)
+            status = init_status(blueprint_to_dict(bp2), register)
+            blocked = [s for s in status["sections"].values()
+                       if s["status"] == "BLOCKED_BY_DECISION"]
+            self.assertGreater(len(blocked), 0,
+                               "Open decisions should block dependent sections")
+
+
+class TestGenerationCLI(unittest.TestCase):
+    """End-to-end CLI pipeline (NRC = no decisions)."""
+
+    NRC = Path("C:/xampp/htdocs/arfada-pe1-work/document-store-fresh/blobs/0e/"
+               "0e89874c934c9f0c7f5fbf17b19ba63b11ef138698fe961c120689de522a5c94.docx")
+
+    def _run(self, args, cwd=None):
+        import subprocess
+        r = subprocess.run(["python"] + args, capture_output=True, cwd=str(cwd or _ROOT))
+        return r.returncode, r.stdout.decode("utf-8"), r.stderr.decode("utf-8")
+
+    def test_full_pipeline_synthetic(self):
+        """analyze → blueprint → prepare → validate → assemble on synthetic_en."""
+        import tempfile, json as _json
+        with tempfile.TemporaryDirectory() as tmp:
+            from scripts.analyze_tor import analyze
+            result = analyze(EN_DOCX, tmp)
+            run_dir = Path(result["output_dir"])
+
+            rc, out, err = self._run(["scripts/build_blueprint.py", str(run_dir)])
+            self.assertEqual(rc, 0, err)
+            bp_summary = _json.loads(out)
+            self.assertGreater(bp_summary["blueprint"]["sections"], 3)
+
+            # prepare + validate one section (METHODOLOGY)
+            rc, out, err = self._run(["scripts/prepare_section.py", str(run_dir), "METHODOLOGY"])
+            self.assertEqual(rc, 0, err)
+            packet = _json.loads(out)
+            slots = packet["mandatory_slots"]
+            cand = {"section_id": "METHODOLOGY",
+                    "blocks": [{"block_id": "b1", "type": "paragraph",
+                                "text": "ARFADA proposes a rigorous mixed-methods design that "
+                                        "triangulates qualitative and quantitative evidence "
+                                        "against each evaluation question in the TOR."}],
+                    "requirement_response_ledger": [
+                        {"slot_id": s["slot_id"], "requirement_id": s["requirement_id"],
+                         "block_ids": ["b1"], "response_summary": "addressed",
+                         "status": "ADDRESSED"} for s in slots]}
+            cand_path = run_dir / "_cand_meth.json"
+            cand_path.write_text(_json.dumps(cand), encoding="utf-8")
+            rc, out, err = self._run(["scripts/validate_section.py", str(run_dir),
+                                      "METHODOLOGY", str(cand_path)])
+            self.assertEqual(rc, 0, err)
+            self.assertEqual(_json.loads(out)["status"], "READY")
+
+            # assemble
+            rc, out, err = self._run(["scripts/assemble_draft.py", str(run_dir)])
+            self.assertEqual(rc, 0, err)
+            self.assertTrue((run_dir / "proposal_draft.md").exists())
+
+    def test_cross_tor_protection(self):
+        """build_blueprint rejects a register whose run_id does not match."""
+        import tempfile, json as _json
+        with tempfile.TemporaryDirectory() as tmp:
+            from scripts.analyze_tor import analyze
+            result = analyze(EN_DOCX, tmp)
+            run_dir = Path(result["output_dir"])
+            # write a decision register with WRONG run_id
+            bogus = {"schema_version": "1", "run_id": "WRONG_RUN", "tor_identity": "x",
+                     "created_at": "", "updated_at": "", "status": "OPEN", "decisions": []}
+            (run_dir / "decision_register.json").write_text(_json.dumps(bogus), encoding="utf-8")
+            rc, out, err = self._run(["scripts/build_blueprint.py", str(run_dir)])
+            self.assertEqual(rc, 3, "Cross-TOR register must be rejected with exit 3")
+
+    @unittest.skipUnless(NRC.exists(), "NRC TOR not available")
+    def test_nrc_blueprint_no_decisions(self):
+        import tempfile, json as _json
+        with tempfile.TemporaryDirectory() as tmp:
+            from scripts.analyze_tor import analyze
+            result = analyze(self.NRC, tmp)
+            run_dir = Path(result["output_dir"])
+            rc, out, err = self._run(["scripts/build_blueprint.py", str(run_dir)])
+            self.assertEqual(rc, 0, err)
+            summary = _json.loads(out)["blueprint"]
+            self.assertEqual(summary["open_decisions"], 0)
+            self.assertEqual(summary["sections_blocked_by_decisions"], 0)
+
+
+class TestArabicGeneration(unittest.TestCase):
+
+    def test_arabic_blueprint_language(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            _, bp, _, _ = _analyze_and_blueprint(AR_DOCX, tmp)
+            self.assertEqual(bp.language, "arabic")
+
+    def test_arabic_requirement_text_in_packet(self):
+        import tempfile
+        from engine.tor.generation import build_packet
+        from engine.tor.blueprint import blueprint_to_dict
+        with tempfile.TemporaryDirectory() as tmp:
+            _, bp, reqs, reg = _analyze_and_blueprint(AR_DOCX, tmp)
+            bpd = blueprint_to_dict(bp)
+            req_by_id = {r["req_id"]: r for r in reqs}
+            sec = next((s for s in bpd["sections"] if s["requirement_ids"]), None)
+            if sec is None:
+                self.skipTest("No section with requirements")
+            packet = build_packet(section=sec, slots=bpd["slots"],
+                                  requirements_by_id=req_by_id, decision_register=reg,
+                                  language="arabic", assignment_metadata={})
+            text = " ".join(r["text"] for r in packet["owned_requirements"])
+            arabic = [c for c in text if "؀" <= c <= "ۿ"]
+            self.assertGreater(len(arabic), 5, "Arabic requirement text must be preserved")
+
+
+class TestNoProviderAPI(unittest.TestCase):
+    """Verify the plugin contains no Anthropic API dependency."""
+
+    def test_no_anthropic_import_in_engine(self):
+        import glob
+        offenders = []
+        for py in glob.glob(str(_ROOT / "engine" / "**" / "*.py"), recursive=True):
+            txt = Path(py).read_text(encoding="utf-8")
+            if "import anthropic" in txt or "anthropic.Anthropic" in txt \
+                    or "ANTHROPIC_API_KEY" in txt:
+                offenders.append(py)
+        self.assertEqual(offenders, [], f"Anthropic API usage found in: {offenders}")
+
+    def test_no_anthropic_import_in_scripts(self):
+        import glob
+        offenders = []
+        for py in glob.glob(str(_ROOT / "scripts" / "*.py")):
+            txt = Path(py).read_text(encoding="utf-8")
+            if "import anthropic" in txt or "anthropic.Anthropic" in txt \
+                    or "ANTHROPIC_API_KEY" in txt:
+                offenders.append(py)
+        self.assertEqual(offenders, [], f"Anthropic API usage found in: {offenders}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

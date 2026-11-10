@@ -2,17 +2,17 @@
 name: arfada-proposal
 description: >
   ARFADA Proposal Assistant — structured TOR analysis, human decision review,
-  and proposal drafting for ARFADA team members. Invoke with /arfada-proposal
-  to analyze a TOR, review proposal decisions, or check plugin status.
-version: 0.3.0
+  and controlled proposal draft generation for ARFADA team members. Invoke with
+  /arfada-proposal to analyze a TOR, review proposal decisions, or generate a draft.
+version: 0.4.0
 trigger: /arfada-proposal
 ---
 
 # ARFADA Proposal Assistant
 
-**Plugin version:** 0.3.0
+**Plugin version:** 0.4.0
 **Publisher:** ARFADA
-**Status:** Phase 2 — Human Decision Review active
+**Status:** Phase 3 — Controlled Proposal Draft Generation active
 
 ---
 
@@ -21,22 +21,35 @@ trigger: /arfada-proposal
 When invoked without context, print:
 
 ```
-ARFADA Proposal Assistant v0.3.0
+ARFADA Proposal Assistant v0.4.0
 
 Available now:
-  1. Analyze TOR     — provide a .pdf or .docx file
+  1. Analyze TOR               — provide a .pdf or .docx file
   2. Review Proposal Decisions — review and record proposal choices
+  3. Generate Proposal Draft   — build a TOR-grounded draft section by section
 
 Coming later:
-  3. Generate Proposal Draft
   4. Quality Review
   5. Export Word
 ```
 
-If a run directory is already in context (from previous analysis), offer:
+If a run directory is already in context (from previous analysis), offer the
+relevant next step:
 ```
   2. Review Proposal Decisions  [run: <run_id>]
+  3. Generate Proposal Draft    [run: <run_id>]
 ```
+
+---
+
+## CRITICAL: You are the generator
+
+In Phase 3, **you (the active Claude Code session) write the proposal content**.
+There is NO separate API call. The Python scripts are deterministic plumbing:
+they build packets, validate your output, and persist artifacts. You must:
+- read each generation packet
+- write a structured section candidate JSON following the packet's output_contract
+- never bypass the packet or invent facts outside TOR + approved decisions
 
 ---
 
@@ -264,10 +277,146 @@ Example format for Arabic TOR:
 
 ---
 
-## Constraints
+## Constraints (Decision Review)
 
 - NEVER auto-resolve a decision without explicit user confirmation.
 - NEVER modify TOR-fixed requirements (they don't appear in the decision register).
 - NEVER invent TOR constraints not in decision_candidates.json.
 - If the run directory changes (different TOR), start a new analysis — do not apply decisions cross-TOR.
 - Output directories (arfada-output/) are local only.
+
+---
+
+## 3. Generate Proposal Draft
+
+### Step 1 — Build the blueprint
+
+```bash
+python "<plugin_root>/scripts/build_blueprint.py" "<run_dir>"
+```
+
+This reads tor_analysis.json + requirements.json + decision_register.json (if present),
+validates run identity, and writes proposal_blueprint.json + generation_status.json.
+
+Present the blueprint summary to the user:
+
+```
+Proposal Blueprint
+
+Sections:                     [sections]
+Mandatory requirements:       [mandatory_bidder_requirements]
+Response slots:               [response_slots]
+Open decisions:               [open_decisions]
+Sections blocked by decisions:[sections_blocked_by_decisions]
+Sections needing ARFADA evidence: [sections_needing_evidence]
+
+Section order: [section_order list]
+```
+
+If `open_decisions > 0`, note:
+> Some sections depend on unresolved decisions and will be marked BLOCKED.
+> You can resolve them first (option 2) or generate the unblocked sections now.
+
+### Step 2 — Generate sections one at a time
+
+Loop until no PENDING sections remain:
+
+**a.** Find the next section:
+```bash
+python "<plugin_root>/scripts/generation_status.py" "<run_dir>" --next
+```
+If `next_section` is null → go to Step 3 (assemble).
+
+**b.** Prepare the packet:
+```bash
+python "<plugin_root>/scripts/prepare_section.py" "<run_dir>" "<section_id>"
+```
+If the response status is `BLOCKED_BY_DECISION`, mark it and move on (the script
+already set the status). Otherwise the full packet is printed.
+
+**c.** Read the packet. **Write the section candidate yourself** following the
+packet's `output_contract`. Produce a JSON object:
+```json
+{
+  "section_id": "<section_id>",
+  "blocks": [
+    {"block_id": "b1", "type": "paragraph", "text": "..."},
+    {"block_id": "b2", "type": "bullet_list", "items": ["...", "..."]},
+    {"block_id": "b3", "type": "table", "columns": ["...","..."], "rows": [["...","..."]]}
+  ],
+  "requirement_response_ledger": [
+    {"slot_id": "<from mandatory_slots>", "requirement_id": "<...>",
+     "block_ids": ["b1"], "response_summary": "...", "status": "ADDRESSED"}
+  ]
+}
+```
+
+Rules you MUST follow when writing:
+- Every mandatory slot in the packet needs a ledger entry with real block_ids.
+- Use `applied_decisions` values EXACTLY (e.g. if KII count resolved to 35, write 35 — never 30 or "approximately 35").
+- For DEFERRED decisions, state confirmation at inception; do NOT invent a value.
+- For sections with `needs_arfada_evidence: true`, use an `evidence_placeholder`
+  block with text `NEEDS_ARFADA_EVIDENCE: <what is needed>` instead of inventing
+  organizational facts (years, project counts, past clients, staff names).
+- Prefer tables for EVALUATION_FRAMEWORK, DELIVERABLES, WORKPLAN, TEAM.
+- Keep paragraphs 60–120 words. Respond substantively — do not just restate the TOR.
+- EXECUTIVE_SUMMARY is generated LAST (the status script enforces order).
+
+Write the candidate to `<run_dir>/_candidate_<section_id>.json` using the Write tool.
+
+**d.** Validate + persist:
+```bash
+python "<plugin_root>/scripts/validate_section.py" "<run_dir>" "<section_id>" "<run_dir>/_candidate_<section_id>.json"
+```
+- Exit 0 / status READY → section persisted. Continue to next section.
+- Exit 4 / status INVALID → read the errors + failed_slots. Fix ONLY those,
+  rewrite the candidate, and re-run validate. Maximum **2 repair attempts**
+  (the script enforces the cap and marks FAILED after that).
+
+### Step 3 — Assemble the draft
+
+```bash
+python "<plugin_root>/scripts/assemble_draft.py" "<run_dir>"
+```
+
+Present the coverage summary:
+```
+Proposal Draft Assembled — proposal_draft.md
+
+Sections ready:    [sections_ready]
+Sections blocked:  [sections_blocked]
+
+Requirement coverage:
+  Addressed:                   [addressed]
+  Partial:                     [partial]
+  Missing:                     [missing]
+  Blocked by decision:         [blocked_by_decision]
+  Blocked by missing evidence: [blocked_by_missing_evidence]
+```
+
+Then offer:
+```
+  show draft          — display proposal_draft.md
+  resume              — generate any remaining unblocked sections
+  review decisions    — resolve blocking decisions, then regenerate
+  done
+```
+
+### Resume behavior
+
+Re-entering "Generate Proposal Draft" on an existing run detects state via
+generation_status.json. Do NOT regenerate READY sections unless the user
+explicitly asks. Continue from the next PENDING section.
+
+---
+
+## Constraints (Generation)
+
+- You are the generator — no separate API. Write section candidates yourself.
+- Allowed facts: TOR + approved Decision Register ONLY.
+- NEVER invent ARFADA organizational facts — use NEEDS_ARFADA_EVIDENCE placeholders.
+- NEVER contradict a TOR-fixed value or an approved decision value.
+- NEVER invent a value for an unresolved/deferred decision.
+- No historical proposal text, no RAG, no web research in this phase.
+- Max 2 repair attempts per section; respect the validator's verdict.
+- Generated drafts (arfada-output/) are local only — never committed.

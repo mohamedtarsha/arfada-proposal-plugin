@@ -3,8 +3,8 @@
 A Claude Code plugin for ARFADA staff. Brings structured TOR analysis and
 proposal drafting into Claude Code — distributed privately via GitHub.
 
-> **Status:** Phase 2 — TOR Analysis + Human Decision Review.
-> Proposal generation planned for Phase 3.
+> **Status:** Phase 3 — TOR Analysis + Human Decision Review + Controlled Draft Generation.
+> Word export and final QA planned for later phases.
 
 ---
 
@@ -14,16 +14,23 @@ proposal drafting into Claude Code — distributed privately via GitHub.
 |-------|---------|-----------|
 | 0 | 0.1.x | Plugin shell, GitHub distribution |
 | 1 | 0.2.x | TOR analysis: requirements, metadata, decisions (EN + AR, PDF + DOCX) |
-| 2 | 0.3.x | **Human Decision Review: record proposal choices, validate against TOR** |
-| 3 | 1.0.0 | Full TOR-to-proposal draft generation |
+| 2 | 0.3.x | Human Decision Review: record proposal choices, validate against TOR |
+| 3 | 0.4.x | **Controlled proposal draft generation (TOR-grounded, decision-aware)** |
+| 4 | 1.0.0 | Quality review + Word export |
 
-### Current capabilities (v0.3.0)
+### Current capabilities (v0.4.0)
 
 1. **Analyze TOR** — extract requirements, metadata, constraints, and decision
    candidates from a `.pdf` or `.docx` TOR (English + Arabic, tables, provenance).
 2. **Review Proposal Decisions** — walk through genuine proposal decisions one by
    one, record the team's choices (validated against TOR constraints), defer to
    inception, or leave unresolved. Resumable, editable, fully traceable.
+3. **Generate Proposal Draft** — build a deterministic blueprint (section set,
+   requirement ownership, response slots, decision dependencies), then generate
+   each section with the active Claude Code session (no API key). Every section is
+   validated: schema, mandatory-slot coverage, ledger/block linkage, approved
+   decision values enforced exactly, and no invented ARFADA facts (organizational
+   claims become `NEEDS_ARFADA_EVIDENCE` placeholders). Assembles `proposal_draft.md`.
 
 ---
 
