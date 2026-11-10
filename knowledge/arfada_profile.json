@@ -1,0 +1,48 @@
+{
+  "knowledge_version": "2026.11.1",
+  "organization": {
+    "fact_id": "org_name",
+    "name": "ARFADA",
+    "value": "ARFADA",
+    "description": "A monitoring, evaluation, assessment and research firm delivering independent third-party data collection and analysis for international organizations, UN agencies, and NGOs.",
+    "source": "master_tracker",
+    "verified": true
+  },
+  "capabilities": [
+    {
+      "fact_id": "cap_evaluation",
+      "label": "Evaluations",
+      "value": "Independent external, mid-term, and final evaluations against OECD-DAC criteria.",
+      "source": "project_registry",
+      "verified": true
+    },
+    {
+      "fact_id": "cap_assessment",
+      "label": "Needs & market assessments",
+      "value": "Multi-sector needs assessments and market/economy assessments.",
+      "source": "project_registry",
+      "verified": true
+    },
+    {
+      "fact_id": "cap_tpm",
+      "label": "Third-party monitoring",
+      "value": "Independent third-party monitoring and verification in access-constrained settings.",
+      "source": "project_registry",
+      "verified": true
+    },
+    {
+      "fact_id": "cap_research",
+      "label": "Research & studies",
+      "value": "Baseline, endline, and formative research studies with mixed-methods designs.",
+      "source": "project_registry",
+      "verified": true
+    },
+    {
+      "fact_id": "cap_data_collection",
+      "label": "Primary data collection",
+      "value": "Household surveys, key informant interviews, focus group discussions, and remote data collection.",
+      "source": "master_tracker",
+      "verified": true
+    }
+  ]
+}

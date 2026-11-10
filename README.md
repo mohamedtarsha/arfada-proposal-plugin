@@ -3,8 +3,9 @@
 A Claude Code plugin for ARFADA staff. Brings structured TOR analysis and
 proposal drafting into Claude Code — distributed privately via GitHub.
 
-> **Status:** Phase 3 — TOR Analysis + Human Decision Review + Controlled Draft Generation.
-> Word export and final QA planned for later phases.
+> **Status:** Phase 4 — TOR Analysis + Decision Review + Controlled Generation +
+> Verified Knowledge + Professional Word export.
+> Final quality review planned for a later phase.
 
 ---
 
@@ -15,22 +16,30 @@ proposal drafting into Claude Code — distributed privately via GitHub.
 | 0 | 0.1.x | Plugin shell, GitHub distribution |
 | 1 | 0.2.x | TOR analysis: requirements, metadata, decisions (EN + AR, PDF + DOCX) |
 | 2 | 0.3.x | Human Decision Review: record proposal choices, validate against TOR |
-| 3 | 0.4.x | **Controlled proposal draft generation (TOR-grounded, decision-aware)** |
-| 4 | 1.0.0 | Quality review + Word export |
+| 3 | 0.4.x | Controlled proposal draft generation (TOR-grounded, decision-aware) |
+| 4 | 0.5.x | **Assignment-type inference + verified ARFADA knowledge + professional DOCX** |
+| 5 | 1.0.0 | Final quality review |
 
-### Current capabilities (v0.4.0)
+### Current capabilities (v0.5.0)
 
-1. **Analyze TOR** — extract requirements, metadata, constraints, and decision
-   candidates from a `.pdf` or `.docx` TOR (English + Arabic, tables, provenance).
-2. **Review Proposal Decisions** — walk through genuine proposal decisions one by
-   one, record the team's choices (validated against TOR constraints), defer to
-   inception, or leave unresolved. Resumable, editable, fully traceable.
-3. **Generate Proposal Draft** — build a deterministic blueprint (section set,
-   requirement ownership, response slots, decision dependencies), then generate
-   each section with the active Claude Code session (no API key). Every section is
-   validated: schema, mandatory-slot coverage, ledger/block linkage, approved
-   decision values enforced exactly, and no invented ARFADA facts (organizational
-   claims become `NEEDS_ARFADA_EVIDENCE` placeholders). Assembles `proposal_draft.md`.
+1. **Analyze TOR** — requirements, metadata, constraints, decision candidates, and
+   **assignment-type inference** (Evaluation / Needs Assessment / TPM / Research / …
+   with confidence + evidence; LOW confidence surfaces a classification decision —
+   no fixed "evaluation" default). English + Arabic, PDF + DOCX, tables, provenance.
+2. **Review Proposal Decisions** — record the team's choices, validated against TOR
+   constraints; resumable, editable, traceable.
+3. **Generate Proposal Draft** — deterministic **type-specific** blueprint (the
+   framework section is an Evaluation / Assessment / Monitoring / Research matrix as
+   appropriate), requirement ownership, response slots, decision dependencies. The
+   active Claude Code session writes each section (no API key). **Verified ARFADA
+   facts** (versioned local knowledge snapshot) are injected with provenance; the
+   validator rejects unsupported ARFADA claims (`UNSUPPORTED_ARFADA_CLAIM`) and
+   requires `NEEDS_ARFADA_EVIDENCE` placeholders for anything unverified.
+4. **Export Word** — professional editable `.docx` (python-docx only, no MS Word /
+   LibreOffice) with a cover page, named styles, real headings, bullet/numbered
+   lists, and real Word tables. Two variants: **internal review** (shows evidence
+   gaps + provenance) and **client draft** (hides all internal metadata; blocked if
+   a hard unsupported-fact error remains).
 
 ---
 

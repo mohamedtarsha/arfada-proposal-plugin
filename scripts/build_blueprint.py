@@ -72,7 +72,15 @@ def main(argv=None) -> int:
     metadata = tor.get("metadata", {})
     fields_found = list(metadata.keys())
     language = tor.get("diagnostics", {}).get("language_detected", "english")
-    assignment_type = "evaluation"  # default; could be refined from metadata
+    # Assignment type inferred during analysis (Phase 4) — NO fixed evaluation default.
+    at = tor.get("assignment_type", {})
+    assignment_type = at.get("assignment_type", "OTHER")
+    # If the type needs a decision and the user resolved it in the register, honor it.
+    if register:
+        for d in register.get("decisions", []):
+            if d.get("requirement_id") == "assignment_type" \
+                    and d.get("decision_status") == "RESOLVED" and d.get("selected_value"):
+                assignment_type = str(d["selected_value"]).upper()
 
     tor_identity = register.get("tor_identity") if register else run_id
 
@@ -102,6 +110,10 @@ def main(argv=None) -> int:
     _out({
         "status": "ok",
         "run_id": run_id,
+        "assignment_type": bp.assignment_type,
+        "assignment_type_label": bp.assignment_type_label,
+        "framework_section": bp.framework_section,
+        "knowledge_version": bp.knowledge_version,
         "blueprint": {
             "sections": bp.coverage["sections"],
             "total_bidder_requirements": bp.coverage["total_bidder_requirements"],

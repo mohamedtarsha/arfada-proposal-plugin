@@ -1,0 +1,21 @@
+{
+  "knowledge_version": "2026.11.1",
+  "created_at": "2026-11-10",
+  "description": "Plugin-local snapshot of VERIFIED ARFADA organizational facts for proposal drafting. Contains only verified aggregate metrics and structured project metadata (no proposal prose, no confidential client content, no winning-proposal text).",
+  "sources": [
+    {
+      "source_id": "master_tracker",
+      "name": "ARFADA Master Tracker (authoritative aggregate data-collection totals)",
+      "authority": "VERIFIED",
+      "note": "Aggregate volumes of primary data collection ARFADA has delivered across its portfolio. Authoritative reference values; refresh from the live Master Tracker before client submission and bump KNOWLEDGE_VERSION."
+    },
+    {
+      "source_id": "project_registry",
+      "name": "ARFADA Project Registry (structured metadata only)",
+      "authority": "VERIFIED",
+      "note": "Structured per-project metadata (client, country, type, sector, year) — no proposal prose, no methodology wording. Used for relevant-experience matching."
+    }
+  ],
+  "refresh_policy": "Update the authoritative snapshot, run tests, bump KNOWLEDGE_VERSION, push to private GitHub. Never overwrite facts silently.",
+  "safety": "No confidential proposal text. No winning-proposal content. No holdout/benchmark data. No personal CV data."
+}

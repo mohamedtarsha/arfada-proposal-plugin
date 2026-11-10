@@ -1,0 +1,18 @@
+{
+  "knowledge_version": "2026.11.1",
+  "note": "Structured per-project metadata ONLY (client, country, type, sector, year). No proposal prose, no methodology wording, no confidential content. Used for deterministic relevant-experience matching in EXPERIENCE sections. Refresh from the authoritative project registry and bump KNOWLEDGE_VERSION.",
+  "projects": [
+    {"fact_id": "proj_nrc_afg", "client": "Norwegian Refugee Council (NRC)", "country": "Afghanistan", "region": "Asia", "assignment_type": "EVALUATION", "sector": "Climate / Resilience", "year": 2025, "source": "project_registry", "verified": true},
+    {"fact_id": "proj_wvi", "client": "World Vision International (WVI)", "country": "Multiple", "region": "MENA", "assignment_type": "EVALUATION", "sector": "Child Protection", "year": 2024, "source": "project_registry", "verified": true},
+    {"fact_id": "proj_giz", "client": "GIZ", "country": "Multiple", "region": "MENA", "assignment_type": "EVALUATION", "sector": "Governance", "year": 2024, "source": "project_registry", "verified": true},
+    {"fact_id": "proj_plan", "client": "Plan International", "country": "Multiple", "region": "MENA", "assignment_type": "EVALUATION", "sector": "Education", "year": 2024, "source": "project_registry", "verified": true},
+    {"fact_id": "proj_unops", "client": "UNOPS", "country": "Multiple", "region": "MENA", "assignment_type": "EVALUATION", "sector": "Infrastructure", "year": 2024, "source": "project_registry", "verified": true},
+    {"fact_id": "proj_acted_jor", "client": "ACTED", "country": "Jordan", "region": "MENA", "assignment_type": "EVALUATION", "sector": "Livelihoods", "year": 2026, "source": "project_registry", "verified": true},
+    {"fact_id": "proj_oxfam_lbn", "client": "Oxfam", "country": "Lebanon", "region": "MENA", "assignment_type": "EVALUATION", "sector": "WASH", "year": 2025, "source": "project_registry", "verified": true},
+    {"fact_id": "proj_enabel", "client": "Enabel", "country": "Multiple", "region": "MENA", "assignment_type": "EVALUATION", "sector": "Economic Development", "year": 2024, "source": "project_registry", "verified": true},
+    {"fact_id": "proj_sci_sdn", "client": "Save the Children (SCI)", "country": "Sudan", "region": "MENA", "assignment_type": "EVALUATION", "sector": "Child Protection", "year": 2026, "source": "project_registry", "verified": true},
+    {"fact_id": "proj_irc", "client": "International Rescue Committee (IRC)", "country": "Multiple", "region": "MENA", "assignment_type": "ASSESSMENT", "sector": "Humanitarian", "year": 2024, "source": "project_registry", "verified": true},
+    {"fact_id": "proj_si", "client": "Solidarites International (SI)", "country": "Multiple", "region": "MENA", "assignment_type": "ASSESSMENT", "sector": "WASH", "year": 2024, "source": "project_registry", "verified": true},
+    {"fact_id": "proj_srrvcm", "client": "Confidential", "country": "Syria", "region": "MENA", "assignment_type": "MARKET_ASSESSMENT", "sector": "Market Systems / Green Economy", "year": 2025, "source": "project_registry", "verified": true}
+  ]
+}

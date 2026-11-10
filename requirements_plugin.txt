@@ -6,8 +6,8 @@
 # Note: pypdf and python-docx may already be present if the main app is
 # installed. The plugin works with the same Python environment.
 
-# Document parsing
-python-docx>=1.1.0    # DOCX extraction (PE2 engine adapter)
+# Document parsing + Word export
+python-docx>=1.1.0    # DOCX extraction (adapter) + professional DOCX export (Phase 4)
 pypdf>=3.0.0          # PDF text extraction (fallback)
 pdfplumber>=0.11.0    # PDF structured table extraction (Phase 1.1)
 

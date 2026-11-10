@@ -1829,5 +1829,470 @@ class TestNoProviderAPI(unittest.TestCase):
         self.assertEqual(offenders, [], f"Anthropic API usage found in: {offenders}")
 
 
+# ===========================================================================
+# Phase 4 tests: Assignment type, Knowledge, Fact validation, DOCX
+# ===========================================================================
+
+class TestAssignmentType(unittest.TestCase):
+
+    def _infer(self, title="", objectives="", scope="", reqs=None):
+        from engine.tor.assignment_type import infer_assignment_type
+        meta = {}
+        if title:
+            meta["assignment"] = {"value": title}
+        if objectives:
+            meta["objectives"] = {"value": objectives}
+        if scope:
+            meta["scope"] = {"value": scope}
+        return infer_assignment_type(meta, reqs or [])
+
+    def test_evaluation_detected(self):
+        r = self._infer(title="Final Evaluation of the Resilience Programme",
+                        objectives="Assess relevance, effectiveness against OECD-DAC criteria",
+                        reqs=[{"category": "evaluation_questions", "text": "evaluation question"}])
+        self.assertEqual(r.assignment_type, "EVALUATION")
+
+    def test_needs_assessment_detected(self):
+        r = self._infer(title="Multi-Sector Needs Assessment (MSNA)",
+                        objectives="Assess humanitarian needs across sectors and population groups")
+        self.assertEqual(r.assignment_type, "NEEDS_ASSESSMENT")
+
+    def test_tpm_detected(self):
+        r = self._infer(title="Third-Party Monitoring of Food Distribution",
+                        objectives="Independent verification monitoring of distribution sites")
+        self.assertEqual(r.assignment_type, "TPM")
+
+    def test_research_detected(self):
+        r = self._infer(title="Formative Research Study on Adolescent Nutrition",
+                        objectives="Research questions on dietary behaviour; qualitative study")
+        self.assertEqual(r.assignment_type, "RESEARCH_STUDY")
+
+    def test_baseline_detected(self):
+        r = self._infer(title="Baseline Study for the WASH Programme",
+                        objectives="Establish baseline values for key indicators")
+        self.assertEqual(r.assignment_type, "BASELINE")
+
+    def test_low_confidence_no_signal(self):
+        r = self._infer(title="Consultancy Services", objectives="Support the programme team")
+        self.assertEqual(r.confidence, "LOW")
+        self.assertTrue(r.needs_decision)
+
+    def test_no_evaluation_default(self):
+        """A pure needs-assessment TOR must NOT come out EVALUATION."""
+        r = self._infer(title="Rapid Needs Assessment",
+                        objectives="Identify priority humanitarian needs and affected groups")
+        self.assertNotEqual(r.assignment_type, "EVALUATION")
+
+    def test_evidence_present(self):
+        r = self._infer(title="Mid-Term Evaluation", objectives="mid-term review of progress")
+        self.assertTrue(len(r.evidence) > 0)
+
+
+class TestTypeSpecificBlueprint(unittest.TestCase):
+
+    def test_evaluation_framework_section(self):
+        from engine.tor.blueprint import framework_for_type
+        key, title, purpose, cols = framework_for_type("EVALUATION")
+        self.assertEqual(key, "EVALUATION_FRAMEWORK")
+        self.assertIn("Evaluation Question", cols)
+
+    def test_needs_assessment_framework_section(self):
+        from engine.tor.blueprint import framework_for_type
+        key, title, purpose, cols = framework_for_type("NEEDS_ASSESSMENT")
+        self.assertEqual(key, "ASSESSMENT_FRAMEWORK")
+        self.assertIn("Assessment Dimension", cols)
+        self.assertEqual(title, "Assessment Framework")
+
+    def test_tpm_framework_section(self):
+        from engine.tor.blueprint import framework_for_type
+        key, title, purpose, cols = framework_for_type("TPM")
+        self.assertEqual(key, "MONITORING_FRAMEWORK")
+        self.assertIn("Verification Approach", cols)
+
+    def test_research_framework_section(self):
+        from engine.tor.blueprint import framework_for_type
+        key, title, purpose, cols = framework_for_type("RESEARCH_STUDY")
+        self.assertEqual(key, "RESEARCH_FRAMEWORK")
+        self.assertIn("Research Question", cols)
+
+    def test_blueprint_uses_type_framework(self):
+        import tempfile
+        from scripts.analyze_tor import analyze
+        from engine.tor.blueprint import build_blueprint
+        import json as _json
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze(EN_DOCX, tmp)
+            run_dir = Path(result["output_dir"])
+            tor = _json.loads((run_dir / "tor_analysis.json").read_text(encoding="utf-8"))
+            reqs = _json.loads((run_dir / "requirements.json").read_text(encoding="utf-8"))["requirements"]
+            bp = build_blueprint(
+                run_id=tor["run_id"], tor_identity="x", assignment_type="NEEDS_ASSESSMENT",
+                language="english", created_at="", requirements=reqs,
+                fields_found=list(tor.get("metadata", {}).keys()), decision_register=None)
+            keys = {s.section_id for s in bp.sections}
+            # evaluation_questions requirements route to ASSESSMENT_FRAMEWORK under this type
+            self.assertEqual(bp.framework_section, "ASSESSMENT_FRAMEWORK")
+
+
+class TestKnowledge(unittest.TestCase):
+
+    def test_knowledge_version(self):
+        from engine.tor.knowledge import knowledge_version
+        self.assertNotEqual(knowledge_version(), "unknown")
+
+    def test_metric_numeric_authority(self):
+        from engine.tor.knowledge import Knowledge
+        k = Knowledge()
+        m = k.metric("total_kii")
+        self.assertIsNotNone(m)
+        self.assertIsInstance(m["value"], int)
+        self.assertIn("source", m)
+
+    def test_fact_has_provenance(self):
+        from engine.tor.knowledge import Knowledge
+        k = Knowledge()
+        f = k.fact("metric_kii_total")
+        self.assertIsNotNone(f)
+        for key in ("fact_id", "source", "knowledge_version", "verified"):
+            self.assertIn(key, f)
+
+    def test_missing_fact_returns_none(self):
+        from engine.tor.knowledge import Knowledge
+        self.assertIsNone(Knowledge().fact("nonexistent_fact"))
+
+    def test_relevant_experience_retrieval(self):
+        from engine.tor.knowledge import Knowledge
+        k = Knowledge()
+        projects = k.relevant_projects(assignment_type="EVALUATION", country="Lebanon")
+        self.assertGreater(len(projects), 0)
+        # best match should be the Lebanon evaluation
+        self.assertEqual(projects[0]["country"], "Lebanon")
+
+    def test_experience_metadata_only_no_prose(self):
+        """Project records must be metadata only — no proposal prose fields."""
+        from engine.tor.knowledge import Knowledge
+        k = Knowledge()
+        for p in k._projects.get("projects", []):
+            # must not contain prose-like long text fields
+            for key in p:
+                if key in ("fact_id", "source"):
+                    continue
+                self.assertLess(len(str(p[key])), 80,
+                                f"project field {key} looks like prose: {p[key]}")
+
+    def test_facts_for_experience_section(self):
+        from engine.tor.knowledge import Knowledge
+        k = Knowledge()
+        facts = k.facts_for_section("EXPERIENCE", assignment_type="EVALUATION", country="Lebanon")
+        self.assertGreater(len(facts), 1)
+        for f in facts:
+            self.assertIn("fact_id", f)
+            self.assertIn("knowledge_version", f)
+
+
+class TestFactValidation(unittest.TestCase):
+
+    def _packet_with_facts(self, facts):
+        return {
+            "section_id": "CONTEXT",
+            "mandatory_slots": [],
+            "applied_decisions": [],
+            "verified_arfada_facts": facts,
+            "needs_arfada_evidence": False,
+        }
+
+    def test_verified_fact_claim_allowed(self):
+        from engine.tor.generation import validate_candidate
+        packet = self._packet_with_facts([{"fact_id": "metric_kii_total", "value": "2558 KIIs"}])
+        cand = {"section_id": "CONTEXT",
+                "blocks": [{"block_id": "c1", "type": "paragraph",
+                            "text": "ARFADA has conducted 2558 key informant interviews across "
+                                    "its portfolio, demonstrating substantial field capacity."}],
+                "requirement_response_ledger": []}
+        v = validate_candidate(packet, cand)
+        self.assertTrue(v["valid"], f"errors: {v['errors']}")
+
+    def test_unsupported_fact_claim_rejected(self):
+        from engine.tor.generation import validate_candidate
+        packet = self._packet_with_facts([{"fact_id": "metric_kii_total", "value": "2558 KIIs"}])
+        cand = {"section_id": "CONTEXT",
+                "blocks": [{"block_id": "c1", "type": "paragraph",
+                            "text": "ARFADA has completed over 300 evaluations in 50 countries "
+                                    "with extensive experience."}],
+                "requirement_response_ledger": []}
+        v = validate_candidate(packet, cand)
+        self.assertFalse(v["valid"])
+        self.assertTrue(any("UNSUPPORTED_ARFADA_CLAIM" in e for e in v["errors"]))
+
+    def test_unsupported_claim_with_placeholder_allowed(self):
+        from engine.tor.generation import validate_candidate, NEEDS_EVIDENCE_TAG
+        packet = self._packet_with_facts([])
+        cand = {"section_id": "CONTEXT",
+                "blocks": [
+                    {"block_id": "c1", "type": "paragraph",
+                     "text": "ARFADA brings extensive relevant experience to this assignment."},
+                    {"block_id": "c2", "type": "evidence_placeholder",
+                     "text": f"{NEEDS_EVIDENCE_TAG}: specific comparable assignments"}],
+                "requirement_response_ledger": []}
+        v = validate_candidate(packet, cand)
+        self.assertTrue(v["valid"], f"errors: {v['errors']}")
+
+    def test_no_invented_team_names(self):
+        """Fabricated personnel claim without evidence is rejected."""
+        from engine.tor.generation import validate_candidate
+        packet = self._packet_with_facts([])
+        packet["section_id"] = "TEAM"
+        packet["needs_arfada_evidence"] = True
+        cand = {"section_id": "TEAM",
+                "blocks": [{"block_id": "t1", "type": "paragraph",
+                            "text": "ARFADA has delivered 150 projects led by senior experts."}],
+                "requirement_response_ledger": []}
+        v = validate_candidate(packet, cand)
+        self.assertFalse(v["valid"])
+
+
+class TestDocxExport(unittest.TestCase):
+    """DOCX rendering — real Word elements, internal/client separation."""
+
+    def _generate_run(self, tmp, with_table=True):
+        """Analyze + blueprint + generate CONTEXT and (optionally) a table section."""
+        import json as _json
+        import subprocess
+        from scripts.analyze_tor import analyze
+        result = analyze(EN_DOCX, tmp)
+        run_dir = Path(result["output_dir"])
+
+        def run(args):
+            r = subprocess.run(["python"] + args, capture_output=True, cwd=str(_ROOT))
+            return r.returncode, r.stdout.decode("utf-8"), r.stderr.decode("utf-8")
+
+        run(["scripts/build_blueprint.py", str(run_dir)])
+
+        # generate METHODOLOGY (paragraph + bullets)
+        rc, out, err = run(["scripts/prepare_section.py", str(run_dir), "METHODOLOGY"])
+        packet = _json.loads(out)
+        slots = packet["mandatory_slots"]
+        cand = {"section_id": "METHODOLOGY",
+                "blocks": [
+                    {"block_id": "m1", "type": "paragraph",
+                     "text": "ARFADA proposes a rigorous mixed-methods design triangulating "
+                             "qualitative and quantitative evidence against the TOR questions."},
+                    {"block_id": "m2", "type": "bullet_list",
+                     "items": ["Desk review", "Qualitative enquiry", "Quantitative survey"]}],
+                "requirement_response_ledger": [
+                    {"slot_id": s["slot_id"], "requirement_id": s["requirement_id"],
+                     "block_ids": ["m1", "m2"], "response_summary": "x", "status": "ADDRESSED"}
+                    for s in slots]}
+            # Avoid approved-value enforcement: this run has no decisions.
+        cp = run_dir / "_cand_m.json"
+        cp.write_text(_json.dumps(cand), encoding="utf-8")
+        run(["scripts/validate_section.py", str(run_dir), "METHODOLOGY", str(cp)])
+
+        if with_table:
+            rc, out, err = run(["scripts/prepare_section.py", str(run_dir), "DELIVERABLES"])
+            packet = _json.loads(out)
+            slots = packet["mandatory_slots"]
+            cand = {"section_id": "DELIVERABLES",
+                    "blocks": [
+                        {"block_id": "d1", "type": "paragraph", "text": "Deliverables follow the TOR."},
+                        {"block_id": "d2", "type": "table",
+                         "columns": ["#", "Deliverable", "Timing"],
+                         "rows": [["1", "Inception Report", "Within 10 days"],
+                                  ["2", "Final Report", "Within 45 days"]]}],
+                    "requirement_response_ledger": [
+                        {"slot_id": s["slot_id"], "requirement_id": s["requirement_id"],
+                         "block_ids": ["d2"], "response_summary": "x", "status": "ADDRESSED"}
+                        for s in slots]}
+            cp = run_dir / "_cand_d.json"
+            cp.write_text(_json.dumps(cand), encoding="utf-8")
+            run(["scripts/validate_section.py", str(run_dir), "DELIVERABLES", str(cp)])
+
+        return run_dir, run
+
+    def test_internal_docx_created(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir, run = self._generate_run(tmp)
+            rc, out, err = run(["scripts/render_docx.py", str(run_dir), "--internal"])
+            self.assertEqual(rc, 0, err)
+            self.assertTrue((run_dir / "proposal_internal_review.docx").exists())
+
+    def test_client_docx_created(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir, run = self._generate_run(tmp)
+            rc, out, err = run(["scripts/render_docx.py", str(run_dir), "--client"])
+            self.assertEqual(rc, 0, err)
+            self.assertTrue((run_dir / "proposal_client_draft.docx").exists())
+
+    def test_docx_has_real_table(self):
+        import tempfile, sys as _s
+        _s.path.insert(0, str(_ROOT / ".mcp_deps"))
+        from docx import Document
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir, run = self._generate_run(tmp, with_table=True)
+            run(["scripts/render_docx.py", str(run_dir), "--internal"])
+            doc = Document(str(run_dir / "proposal_internal_review.docx"))
+            self.assertGreater(len(doc.tables), 0, "DOCX must contain a real Word table")
+            t = doc.tables[0]
+            self.assertEqual(t.rows[0].cells[0].text, "#")
+
+    def test_docx_has_headings_and_lists(self):
+        import tempfile, sys as _s
+        _s.path.insert(0, str(_ROOT / ".mcp_deps"))
+        from docx import Document
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir, run = self._generate_run(tmp)
+            run(["scripts/render_docx.py", str(run_dir), "--internal"])
+            doc = Document(str(run_dir / "proposal_internal_review.docx"))
+            styles = {p.style.name for p in doc.paragraphs if p.text.strip()}
+            self.assertIn("ARFADA Heading 1", styles)
+            self.assertIn("ARFADA Title", styles)
+
+    def test_client_hides_internal_markers(self):
+        import tempfile, sys as _s
+        _s.path.insert(0, str(_ROOT / ".mcp_deps"))
+        from docx import Document
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir, run = self._generate_run(tmp)
+            run(["scripts/render_docx.py", str(run_dir), "--client"])
+            doc = Document(str(run_dir / "proposal_client_draft.docx"))
+            text = "\n".join(p.text for p in doc.paragraphs)
+            for marker in ("NEEDS_ARFADA_EVIDENCE", "Internal review copy", "run tor_",
+                           "fact_id", "BLOCKED_BY"):
+                self.assertNotIn(marker, text, f"client doc leaked internal marker: {marker}")
+
+    def test_cover_page_present(self):
+        import tempfile, sys as _s
+        _s.path.insert(0, str(_ROOT / ".mcp_deps"))
+        from docx import Document
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir, run = self._generate_run(tmp)
+            run(["scripts/render_docx.py", str(run_dir), "--internal"])
+            doc = Document(str(run_dir / "proposal_internal_review.docx"))
+            titles = [p.text for p in doc.paragraphs if p.style.name == "ARFADA Title"]
+            self.assertGreater(len(titles), 0, "Cover title missing")
+            # ARFADA appears on cover
+            self.assertTrue(any("ARFADA" in p.text for p in doc.paragraphs))
+
+    def test_client_blocked_by_unsupported_fact(self):
+        """Hard unsupported-fact error blocks client export (exit 5)."""
+        import tempfile, json as _json, subprocess
+        with tempfile.TemporaryDirectory() as tmp:
+            from scripts.analyze_tor import analyze
+            result = analyze(EN_DOCX, tmp)
+            run_dir = Path(result["output_dir"])
+
+            def run(args):
+                r = subprocess.run(["python"] + args, capture_output=True, cwd=str(_ROOT))
+                return r.returncode, r.stdout.decode("utf-8"), r.stderr.decode("utf-8")
+
+            run(["scripts/build_blueprint.py", str(run_dir)])
+            rc, out, err = run(["scripts/prepare_section.py", str(run_dir), "CONTEXT"])
+            # Manually place an INVALID section (unsupported fact) + mark READY
+            sections_dir = run_dir / "generated_sections"
+            sections_dir.mkdir(exist_ok=True)
+            bad = {"section_id": "CONTEXT",
+                   "blocks": [{"block_id": "c1", "type": "paragraph",
+                               "text": "ARFADA has completed over 500 evaluations in 60 countries."}],
+                   "requirement_response_ledger": []}
+            (sections_dir / "CONTEXT.json").write_text(_json.dumps(bad), encoding="utf-8")
+            status = _json.loads((run_dir / "generation_status.json").read_text(encoding="utf-8"))
+            status["sections"]["CONTEXT"]["status"] = "READY"
+            (run_dir / "generation_status.json").write_text(_json.dumps(status), encoding="utf-8")
+
+            rc, out, err = run(["scripts/render_docx.py", str(run_dir), "--client"])
+            self.assertEqual(rc, 5, "Client export must be blocked by unsupported-fact error")
+
+    def test_arabic_text_in_docx(self):
+        import tempfile, json as _json, subprocess, sys as _s
+        _s.path.insert(0, str(_ROOT / ".mcp_deps"))
+        from docx import Document
+        with tempfile.TemporaryDirectory() as tmp:
+            from scripts.analyze_tor import analyze
+            result = analyze(AR_DOCX, tmp)
+            run_dir = Path(result["output_dir"])
+
+            def run(args):
+                r = subprocess.run(["python"] + args, capture_output=True, cwd=str(_ROOT))
+                return r.returncode, r.stdout.decode("utf-8"), r.stderr.decode("utf-8")
+
+            run(["scripts/build_blueprint.py", str(run_dir)])
+            # If the Arabic blueprint has a classification decision, it may block;
+            # place a simple Arabic CONTEXT section and render.
+            rc, out, err = run(["scripts/prepare_section.py", str(run_dir), "CONTEXT"])
+            if rc != 0:
+                self.skipTest("CONTEXT not preparable for Arabic fixture")
+            sections_dir = run_dir / "generated_sections"
+            sections_dir.mkdir(exist_ok=True)
+            cand = {"section_id": "CONTEXT",
+                    "blocks": [{"block_id": "c1", "type": "paragraph",
+                                "text": "يعمل هذا التقييم في سياق إنساني معقد يتطلب جمع بيانات دقيق ومستقل."}],
+                    "requirement_response_ledger": []}
+            cp = run_dir / "_cand_ar.json"
+            cp.write_text(_json.dumps(cand, ensure_ascii=False), encoding="utf-8")
+            run(["scripts/validate_section.py", str(run_dir), "CONTEXT", str(cp)])
+            rc, out, err = run(["scripts/render_docx.py", str(run_dir), "--internal"])
+            if not (run_dir / "proposal_internal_review.docx").exists():
+                self.skipTest("render produced no file (no ready sections)")
+            doc = Document(str(run_dir / "proposal_internal_review.docx"))
+            text = "\n".join(p.text for p in doc.paragraphs)
+            arabic = [c for c in text if "؀" <= c <= "ۿ"]
+            self.assertGreater(len(arabic), 5, "Arabic text must survive into the DOCX")
+
+    def test_path_with_spaces(self):
+        import tempfile, shutil, subprocess
+        from scripts.analyze_tor import analyze
+        with tempfile.TemporaryDirectory() as tmp:
+            spaced = Path(tmp) / "out put dir"
+            spaced.mkdir()
+            result = analyze(EN_DOCX, str(spaced))
+            run_dir = Path(result["output_dir"])
+
+            def run(args):
+                r = subprocess.run(["python"] + args, capture_output=True, cwd=str(_ROOT))
+                return r.returncode, r.stdout.decode("utf-8"), r.stderr.decode("utf-8")
+
+            rc, out, err = run(["scripts/build_blueprint.py", str(run_dir)])
+            self.assertEqual(rc, 0, err)
+
+
+class TestKnowledgeVersionPersisted(unittest.TestCase):
+
+    def test_blueprint_records_knowledge_version(self):
+        import tempfile, json as _json, subprocess
+        with tempfile.TemporaryDirectory() as tmp:
+            from scripts.analyze_tor import analyze
+            result = analyze(EN_DOCX, tmp)
+            run_dir = Path(result["output_dir"])
+            subprocess.run(["python", "scripts/build_blueprint.py", str(run_dir)],
+                           capture_output=True, cwd=str(_ROOT))
+            bp = _json.loads((run_dir / "proposal_blueprint.json").read_text(encoding="utf-8"))
+            self.assertTrue(bp.get("knowledge_version"))
+
+    def test_analysis_records_plugin_version(self):
+        import tempfile, json as _json
+        from scripts.analyze_tor import analyze
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze(EN_DOCX, tmp)
+            run_dir = Path(result["output_dir"])
+            tor = _json.loads((run_dir / "tor_analysis.json").read_text(encoding="utf-8"))
+            self.assertEqual(tor["plugin_version"], "0.5.0")
+
+
+class TestNoProviderAPIPhase4(unittest.TestCase):
+
+    def test_no_anthropic_in_new_modules(self):
+        import glob
+        offenders = []
+        for py in (glob.glob(str(_ROOT / "engine" / "**" / "*.py"), recursive=True)
+                   + glob.glob(str(_ROOT / "scripts" / "*.py"))):
+            txt = Path(py).read_text(encoding="utf-8")
+            if "import anthropic" in txt or "anthropic.Anthropic" in txt \
+                    or "ANTHROPIC_API_KEY" in txt:
+                offenders.append(py)
+        self.assertEqual(offenders, [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -1,0 +1,46 @@
+{
+  "knowledge_version": "2026.11.1",
+  "note": "Authoritative aggregate data-collection volumes from the ARFADA Master Tracker. These are deterministic lookup values — generation must cite the fact_id, never recompute from prose. Refresh from the live Master Tracker before client submission.",
+  "metrics": [
+    {
+      "fact_id": "metric_projects_total",
+      "metric": "total_projects",
+      "label": "Projects delivered",
+      "value": 146,
+      "unit": "projects",
+      "source": "master_tracker",
+      "verified": true,
+      "as_of": "2026-08-24"
+    },
+    {
+      "fact_id": "metric_kii_total",
+      "metric": "total_kii",
+      "label": "Key informant interviews conducted",
+      "value": 2558,
+      "unit": "KIIs",
+      "source": "master_tracker",
+      "verified": true,
+      "as_of": "2026-08-24"
+    },
+    {
+      "fact_id": "metric_fgd_total",
+      "metric": "total_fgd",
+      "label": "Focus group discussions conducted",
+      "value": 1556,
+      "unit": "FGDs",
+      "source": "master_tracker",
+      "verified": true,
+      "as_of": "2026-08-24"
+    },
+    {
+      "fact_id": "metric_survey_total",
+      "metric": "total_surveys",
+      "label": "Household / individual surveys completed",
+      "value": 69698,
+      "unit": "surveys",
+      "source": "master_tracker",
+      "verified": true,
+      "as_of": "2026-08-24"
+    }
+  ]
+}

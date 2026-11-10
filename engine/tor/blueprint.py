@@ -24,11 +24,63 @@ from typing import Any, Optional
 
 SECTION_ORDER = [
     "EXECUTIVE_SUMMARY", "UNDERSTANDING", "CONTEXT", "OBJECTIVES", "METHODOLOGY",
-    "EVALUATION_FRAMEWORK", "SAMPLING", "DATA_COLLECTION", "DATA_ANALYSIS",
+    "FRAMEWORK", "SAMPLING", "DATA_COLLECTION", "DATA_ANALYSIS",
     "QUALITY_ASSURANCE", "ETHICS", "WORKPLAN", "DELIVERABLES", "TEAM",
     "EXPERIENCE", "SUBMISSION",
 ]
+# Back-compat alias: the generic framework section used to be EVALUATION_FRAMEWORK.
 _ORDER_IX = {k: i for i, k in enumerate(SECTION_ORDER)}
+_ORDER_IX["EVALUATION_FRAMEWORK"] = _ORDER_IX["FRAMEWORK"]
+_ORDER_IX["ASSESSMENT_FRAMEWORK"] = _ORDER_IX["FRAMEWORK"]
+_ORDER_IX["MONITORING_FRAMEWORK"] = _ORDER_IX["FRAMEWORK"]
+_ORDER_IX["RESEARCH_FRAMEWORK"] = _ORDER_IX["FRAMEWORK"]
+
+# The framework section is TYPE-SPECIFIC (spec §3): its key, title, purpose, and
+# matrix columns differ by assignment type — not a mere heading rename.
+TYPE_FRAMEWORK = {
+    "EVALUATION": ("EVALUATION_FRAMEWORK", "Evaluation Framework",
+                   "Map each evaluation question to criteria, data source, method, respondent, and analysis (matrix).",
+                   ["Evaluation Question", "Criterion", "Data Source", "Method", "Respondent", "Analysis"]),
+    "ENDLINE": ("EVALUATION_FRAMEWORK", "Evaluation Framework",
+                "Map each evaluation question to criteria, data source, method, and analysis (matrix).",
+                ["Evaluation Question", "Criterion", "Data Source", "Method", "Respondent", "Analysis"]),
+    "MIDLINE": ("EVALUATION_FRAMEWORK", "Evaluation Framework",
+                "Map each evaluation question to criteria, data source, method, and analysis (matrix).",
+                ["Evaluation Question", "Criterion", "Data Source", "Method", "Respondent", "Analysis"]),
+    "NEEDS_ASSESSMENT": ("ASSESSMENT_FRAMEWORK", "Assessment Framework",
+                         "Map assessment dimensions to indicators, population groups, data source, and prioritization approach (matrix).",
+                         ["Assessment Dimension", "Indicator", "Population Group", "Data Source", "Prioritization"]),
+    "ASSESSMENT": ("ASSESSMENT_FRAMEWORK", "Assessment Framework",
+                   "Map assessment dimensions to indicators, data source, and method (matrix).",
+                   ["Assessment Dimension", "Indicator", "Data Source", "Method"]),
+    "CAPACITY_ASSESSMENT": ("ASSESSMENT_FRAMEWORK", "Capacity Assessment Framework",
+                            "Map capacity domains to indicators, evidence source, and scoring approach (matrix).",
+                            ["Capacity Domain", "Indicator", "Evidence Source", "Scoring"]),
+    "MARKET_ASSESSMENT": ("ASSESSMENT_FRAMEWORK", "Market Assessment Framework",
+                          "Map market-system dimensions to indicators, data source, and analysis (matrix).",
+                          ["Market Dimension", "Indicator", "Data Source", "Analysis"]),
+    "TPM": ("MONITORING_FRAMEWORK", "Monitoring Framework",
+            "Map monitoring questions to verification approach, site/sample selection, tools, and escalation/reporting (matrix).",
+            ["Monitoring Question", "Verification Approach", "Site/Sample", "Tool", "Escalation/Reporting"]),
+    "MONITORING": ("MONITORING_FRAMEWORK", "Monitoring Framework",
+                   "Map monitoring indicators to verification approach, data source, and reporting (matrix).",
+                   ["Indicator", "Verification Approach", "Data Source", "Reporting"]),
+    "RESEARCH_STUDY": ("RESEARCH_FRAMEWORK", "Research Framework",
+                       "Map research questions to design, data source, method, and analysis (matrix).",
+                       ["Research Question", "Design", "Data Source", "Method", "Analysis"]),
+    "SURVEY": ("RESEARCH_FRAMEWORK", "Survey Framework",
+               "Map survey objectives to indicators, population, sampling, and analysis (matrix).",
+               ["Objective", "Indicator", "Population", "Sampling", "Analysis"]),
+}
+_DEFAULT_FRAMEWORK = ("FRAMEWORK", "Analytical Framework",
+                      "Map the assignment's analytical questions to data sources and methods (matrix).",
+                      ["Question", "Data Source", "Method", "Analysis"])
+
+
+def framework_for_type(assignment_type: str):
+    """(key, title, purpose, matrix_columns) for the assignment type."""
+    return TYPE_FRAMEWORK.get((assignment_type or "").upper(), _DEFAULT_FRAMEWORK)
+
 
 SECTION_TITLE = {
     "EXECUTIVE_SUMMARY": "Executive Summary",
@@ -36,7 +88,7 @@ SECTION_TITLE = {
     "CONTEXT": "Context and Background",
     "OBJECTIVES": "Objectives and Scope",
     "METHODOLOGY": "Methodology and Approach",
-    "EVALUATION_FRAMEWORK": "Evaluation Framework",
+    "FRAMEWORK": "Analytical Framework",
     "SAMPLING": "Sampling Strategy",
     "DATA_COLLECTION": "Data Collection",
     "DATA_ANALYSIS": "Data Analysis",
@@ -55,7 +107,7 @@ SECTION_PURPOSE = {
     "CONTEXT": "Explain the operating context relevant to delivering the assignment.",
     "OBJECTIVES": "State the objectives and scope the proposal addresses.",
     "METHODOLOGY": "Describe the proposed methodology and overall approach.",
-    "EVALUATION_FRAMEWORK": "Map evaluation questions to methods, sources, and analysis (matrix).",
+    "FRAMEWORK": "Map the assignment's analytical questions to data sources and methods (matrix).",
     "SAMPLING": "Describe the sampling strategy and sample composition.",
     "DATA_COLLECTION": "Describe data collection methods and tools.",
     "DATA_ANALYSIS": "Describe how data will be analyzed and integrated.",
@@ -69,8 +121,9 @@ SECTION_PURPOSE = {
 }
 
 # Requirement category → the single owning section (no double-count).
+# "evaluation_questions" routes to the TYPE-SPECIFIC framework (resolved at build time).
 CATEGORY_SECTION = {
-    "evaluation_questions": "EVALUATION_FRAMEWORK",
+    "evaluation_questions": "FRAMEWORK",
     "methodology": "METHODOLOGY",
     "data_collection_methods": "DATA_COLLECTION",
     "team": "TEAM",
@@ -91,7 +144,7 @@ FIELD_SECTION = {
     "objectives": "OBJECTIVES", "scope": "OBJECTIVES", "background": "CONTEXT",
     "required_methodology": "METHODOLOGY", "data_collection_methods": "DATA_COLLECTION",
     "sampling_requirements": "SAMPLING", "ethics_safeguarding": "ETHICS",
-    "team_requirements": "TEAM", "evaluation_questions": "EVALUATION_FRAMEWORK",
+    "team_requirements": "TEAM", "evaluation_questions": "FRAMEWORK",
     "deliverables": "DELIVERABLES", "timeline": "WORKPLAN",
     "submission_requirements": "SUBMISSION",
 }
@@ -164,11 +217,15 @@ class ProposalBlueprint:
     run_id: str
     tor_identity: str
     assignment_type: str
+    assignment_type_label: str
     language: str
     created_at: str
     sections: list[BlueprintSection]
     slots: list[ResponseSlot]
     coverage: dict
+    framework_section: str = ""
+    framework_columns: list = None
+    knowledge_version: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +257,12 @@ def build_blueprint(
     `fields_found`   : list of field_key strings present in metadata
     `decision_register` : loaded decision_register.json (or None)
     """
+    # --- resolve the TYPE-SPECIFIC framework section (spec §3) ---
+    fw_key, fw_title, fw_purpose, fw_columns = framework_for_type(assignment_type)
+
+    def _resolve(sec: str) -> str:
+        return fw_key if sec == "FRAMEWORK" else sec
+
     # --- map requirement_id → decision_ids (from register) ---
     req_to_decisions: dict[str, list[dict]] = {}
     if decision_register:
@@ -224,7 +287,7 @@ def build_blueprint(
     for fk in fields_found:
         sec = FIELD_SECTION.get(fk)
         if sec:
-            _mark(sec, "TOR_EXPLICIT", True)
+            _mark(_resolve(sec), "TOR_EXPLICIT", True)
 
     # --- route requirements to owning sections (bidder obligations only) ---
     # Each bidder requirement is owned by exactly one section.
@@ -236,7 +299,7 @@ def build_blueprint(
         if r.get("actor") == "CLIENT":
             continue
         cat = r.get("category", "general")
-        sec = CATEGORY_SECTION.get(cat, "UNDERSTANDING")
+        sec = _resolve(CATEGORY_SECTION.get(cat, "UNDERSTANDING"))
         org = "COMPLIANCE_REQUIRED" if cat in ("submission", "proposal_format", "eligibility") \
             else "TOR_EXPLICIT"
         _mark(sec, org, True)
@@ -279,10 +342,14 @@ def build_blueprint(
         mand_ids = [r["req_id"] for r in reqs if r.get("mandatory", True)]
         dec_deps = sorted({dep for s in sec_slots for dep in s.decision_dependencies})
         modes = sorted({s.response_mode for s in sec_slots}) or ["PROSE"]
+        # type-specific framework section carries its own title/purpose/columns
+        is_framework = (key == fw_key)
+        title = fw_title if is_framework else SECTION_TITLE.get(key, key.title())
+        purpose = fw_purpose if is_framework else SECTION_PURPOSE.get(key, "")
         sections.append(BlueprintSection(
             section_id=key,
-            title=SECTION_TITLE.get(key, key.title()),
-            purpose=SECTION_PURPOSE.get(key, ""),
+            title=title,
+            purpose=purpose,
             sequence=_ORDER_IX.get(key, 999),
             origin=origin[key],
             required=required_map.get(key, False),
@@ -316,16 +383,27 @@ def build_blueprint(
         "sections_needing_evidence": sum(1 for s in sections if s.needs_arfada_evidence),
     }
 
+    from .assignment_type import TYPE_LABEL as _TYPE_LABEL
+    try:
+        from .knowledge import knowledge_version as _kv
+        kver = _kv()
+    except Exception:
+        kver = ""
+
     return ProposalBlueprint(
         schema_version="1",
         run_id=run_id,
         tor_identity=tor_identity,
         assignment_type=assignment_type,
+        assignment_type_label=_TYPE_LABEL.get(assignment_type, assignment_type),
         language=language,
         created_at=created_at,
         sections=sections,
         slots=slots,
         coverage=coverage,
+        framework_section=fw_key,
+        framework_columns=fw_columns,
+        knowledge_version=kver,
     )
 
 
@@ -372,8 +450,12 @@ def blueprint_to_dict(bp: ProposalBlueprint) -> dict:
         "run_id": bp.run_id,
         "tor_identity": bp.tor_identity,
         "assignment_type": bp.assignment_type,
+        "assignment_type_label": bp.assignment_type_label,
         "language": bp.language,
         "created_at": bp.created_at,
+        "framework_section": bp.framework_section,
+        "framework_columns": bp.framework_columns or [],
+        "knowledge_version": bp.knowledge_version,
         "coverage": bp.coverage,
         "sections": [asdict(s) for s in bp.sections],
         "slots": [asdict(s) for s in bp.slots],
@@ -388,9 +470,13 @@ def blueprint_from_dict(d: dict) -> ProposalBlueprint:
         run_id=d["run_id"],
         tor_identity=d.get("tor_identity", ""),
         assignment_type=d.get("assignment_type", ""),
+        assignment_type_label=d.get("assignment_type_label", ""),
         language=d.get("language", "english"),
         created_at=d.get("created_at", ""),
         sections=sections,
         slots=slots,
         coverage=d.get("coverage", {}),
+        framework_section=d.get("framework_section", ""),
+        framework_columns=d.get("framework_columns", []),
+        knowledge_version=d.get("knowledge_version", ""),
     )

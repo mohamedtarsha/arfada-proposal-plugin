@@ -6,6 +6,67 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.5.0] — 2026-11-10
+
+### Added — Phase 4 Verified Knowledge + Assignment Type + Professional DOCX
+
+**Assignment-type inference (`engine/tor/assignment_type.py`)**
+- Deterministic content-based inference (title/objectives/scope/requirements)
+- 13-type taxonomy: EVALUATION / BASELINE / MIDLINE / ENDLINE / NEEDS_ASSESSMENT /
+  TPM / MONITORING / RESEARCH_STUDY / SURVEY / ASSESSMENT / CAPACITY_ASSESSMENT /
+  MARKET_ASSESSMENT / OTHER
+- Presence-weighted scoring with capped frequency bonus (specific signals beat
+  repeated generic words); confidence HIGH/MEDIUM/LOW + evidence snippets
+- **No fixed "evaluation" default**: LOW confidence surfaces a `dec_assignment_type`
+  classification decision; persisted in tor_analysis.json
+
+**Type-specific blueprint (`engine/tor/blueprint.py`)**
+- Framework section is now type-driven: Evaluation Framework / Assessment Framework /
+  Monitoring Framework / Research Framework — distinct key, title, purpose, AND
+  matrix columns (not a heading rename). Requirement ownership stays authoritative.
+
+**Verified ARFADA Knowledge layer**
+- `knowledge/` snapshot: arfada_profile.json, arfada_metrics.json, arfada_projects.json,
+  provenance.json, KNOWLEDGE_VERSION (versioned in Git; refresh → bump → push)
+- `engine/tor/knowledge.py`: fact lookup, numeric authority (totals are deterministic
+  lookups, never recomputed), relevant-experience matching (metadata only, no prose)
+- `scripts/query_knowledge.py`: version | metrics | fact | metric | search
+- Facts injected into generation packets as `verified_arfada_facts` (each with
+  fact_id + source + knowledge_version)
+
+**Fact-claim validation (`engine/tor/generation.py`)**
+- An ARFADA organizational/numeric claim is allowed ONLY if it matches a verified
+  fact value, OR carries a NEEDS_ARFADA_EVIDENCE placeholder; otherwise
+  `UNSUPPORTED_ARFADA_CLAIM` (hard error). TEAM: no invented names.
+
+**Professional DOCX export (`engine/tor/docx_render.py` + `scripts/render_docx.py`)**
+- python-docx only (no MS Word automation, no LibreOffice); cross-platform
+- Named ARFADA style system, cover page, real headings, bullet/numbered lists,
+  real Word tables (never tab-faked)
+- Two variants: `--internal` (shows gaps + provenance + version footer) and
+  `--client` (hides all internal IDs/fact_ids/notes; "DRAFT — HUMAN REVIEW REQUIRED"
+  banner when gaps remain)
+- Optional `--logo` (never fabricated; see assets/brand/README.md)
+
+**Pre-export QA (`engine/tor/preexport_qa.py`)**
+- Re-validates sections, checks decision values, unsupported facts, cross-TOR,
+  client-leakage. Hard unsupported-fact error **blocks client export** (exit 5).
+
+**Versioning:** every proposal records plugin_version + knowledge_version + run_id.
+
+### Validated (live, local)
+- NRC (type resolved → EVALUATION): 12-section blueprint, Evaluation Framework
+- SRRVCM market TOR (→ MARKET_ASSESSMENT): builds **Market Assessment Framework**,
+  NOT an evaluation shape — confirms no evaluation default
+- Verified fact (2,558 KIIs) accepted; fabricated "200 evaluations" rejected
+- Internal + client DOCX render with real 4×4 table; client hides internal markers;
+  client export blocked by an unsupported-fact error
+- 10-fact traceability (fact_id → source → knowledge_version)
+
+### Tests: 181/181 (36 new Phase 4 tests). No Anthropic API.
+
+---
+
 ## [0.4.0] — 2026-11-10
 
 ### Added — Phase 3 Controlled Proposal Generation

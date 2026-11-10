@@ -44,6 +44,7 @@ from engine.tor.decision_model import (
     classify_decision, validate_proposed_value,
     DecisionCandidate, _OPEN_TYPES, _CONSTRAINT_TYPES,
 )
+from engine.tor.assignment_type import infer_assignment_type
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +300,41 @@ def analyze(tor_path: str | Path, output_root: str | Path | None = None) -> dict
             "source_section": f.source_section_path,
         }
 
+    # --- assignment type inference (Phase 4) -------------------------------
+    atype = infer_assignment_type(metadata, enriched_reqs)
+    assignment_type = {
+        "assignment_type": atype.assignment_type,
+        "label": atype.label,
+        "assignment_type_confidence": atype.confidence,
+        "assignment_type_evidence": atype.evidence,
+        "scores": atype.scores,
+        "needs_decision": atype.needs_decision,
+    }
+
+    # LOW-confidence type → surface a genuine classification decision (spec §2).
+    # Never silently fall back to EVALUATION.
+    if atype.needs_decision:
+        options = [atype.assignment_type] + [
+            t for t, _ in list(atype.scores.items())[1:3]
+            if t != atype.assignment_type
+        ]
+        decision_candidates.append(DecisionCandidate(
+            decision_id="dec_assignment_type",
+            requirement_id="assignment_type",
+            decision_type="OPEN_PROPOSAL_DECISION",
+            is_human_decision=True,
+            question=("How should this assignment be classified for proposal "
+                      f"structuring? Best guess: {atype.label}. "
+                      f"Evidence: {', '.join(atype.evidence[:3])}"),
+            constraint_type="ENUM",
+            minimum=None, maximum=None, fixed_value=None,
+            allowed_options=options or [atype.assignment_type],
+            reason="Assignment type could not be inferred with high confidence.",
+            source_text=(metadata.get("assignment", {}) or {}).get("value", "")[:200]
+            if isinstance(metadata.get("assignment"), dict) else "",
+            source_locator="", category="assignment_type", actor="BIDDER",
+        ))
+
     # --- summary counts ----------------------------------------------------
     total = len(enriched_reqs)
     mandatory = sum(1 for r in enriched_reqs if r["mandatory"])
@@ -354,8 +390,9 @@ def analyze(tor_path: str | Path, output_root: str | Path | None = None) -> dict
         "file_path": str(tor_path),
         "file_name": tor_path.name,
         "analyzed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "plugin_version": "0.2.2",
+        "plugin_version": "0.5.0",
         "diagnostics": diagnostics,
+        "assignment_type": assignment_type,
         "metadata": metadata,
         "summary": summary,
         "requirements": enriched_reqs,
@@ -397,6 +434,7 @@ def analyze(tor_path: str | Path, output_root: str | Path | None = None) -> dict
                 "minimum": dc.minimum,
                 "maximum": dc.maximum,
                 "fixed_value": dc.fixed_value,
+                "allowed_options": dc.allowed_options,
                 "reason": dc.reason,
                 "source_text": dc.source_text,
                 "category": dc.category,

@@ -83,6 +83,15 @@ def main(argv=None) -> int:
         for k in ("assignment", "client", "country")
     }
 
+    # verified ARFADA knowledge facts relevant to this section (Phase 4)
+    from engine.tor.knowledge import Knowledge
+    kb = Knowledge()
+    country = assignment_metadata.get("country", "")
+    verified_facts = kb.facts_for_section(
+        section_id, assignment_type=blueprint.get("assignment_type", ""),
+        country=country, region="MENA",
+    )
+
     packet = build_packet(
         section=section,
         slots=blueprint.get("slots", []),
@@ -90,6 +99,10 @@ def main(argv=None) -> int:
         decision_register=register,
         language=blueprint.get("language", "english"),
         assignment_metadata=assignment_metadata,
+        verified_arfada_facts=verified_facts,
+        framework_columns=blueprint.get("framework_columns", []),
+        assignment_type=blueprint.get("assignment_type", ""),
+        knowledge_version=blueprint.get("knowledge_version", kb.version),
     )
 
     packets_dir = run_dir / "generation_packets"

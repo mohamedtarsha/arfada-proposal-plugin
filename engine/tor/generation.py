@@ -83,6 +83,10 @@ def build_packet(
     decision_register: Optional[dict],
     language: str,
     assignment_metadata: dict,
+    verified_arfada_facts: Optional[list] = None,
+    framework_columns: Optional[list] = None,
+    assignment_type: str = "",
+    knowledge_version: str = "",
 ) -> dict:
     """Build the bounded, section-scoped generation packet.
 
@@ -148,6 +152,8 @@ def build_packet(
         })
 
     needs_evidence = section.get("needs_arfada_evidence", False)
+    facts = verified_arfada_facts or []
+    is_framework = bool(framework_columns) and section.get("section_id", "").endswith("FRAMEWORK")
 
     return {
         "schema_version": "1",
@@ -155,6 +161,8 @@ def build_packet(
         "title": section["title"],
         "purpose": section["purpose"],
         "language": language,
+        "assignment_type": assignment_type,
+        "knowledge_version": knowledge_version,
         "assignment": {
             "title": assignment_metadata.get("assignment", ""),
             "client": assignment_metadata.get("client", ""),
@@ -175,35 +183,36 @@ def build_packet(
         "allowed_facts": {
             "TOR": "The TOR requirements and metadata in this packet.",
             "DECISIONS": "The resolved/deferred decisions in applied_decisions.",
+            "VERIFIED_ARFADA_FACTS": "Only the facts in verified_arfada_facts (cite fact_id).",
         },
+        "verified_arfada_facts": facts,
+        "framework_columns": framework_columns if is_framework else None,
         "forbidden_fact_categories": FORBIDDEN_FACT_CATEGORIES,
         "needs_arfada_evidence": needs_evidence,
         "evidence_instruction": (
-            f"For any claim about ARFADA's organizational experience, team member "
-            f"identities, past projects, or verified capacity, insert a "
-            f"'{NEEDS_EVIDENCE_TAG}' placeholder block instead of inventing text."
-            if needs_evidence else
-            f"Do not invent ARFADA organizational facts. If needed, use a "
-            f"'{NEEDS_EVIDENCE_TAG}' placeholder."
+            f"You MAY state the verified facts in verified_arfada_facts (reference the "
+            f"fact_id). For any OTHER claim about ARFADA's experience, team identities, "
+            f"past projects, or capacity NOT in that list, insert a '{NEEDS_EVIDENCE_TAG}' "
+            f"placeholder block instead of inventing text."
         ),
-        "output_contract": _output_contract(section),
+        "output_contract": _output_contract(section, framework_columns if is_framework else None),
         "writing_guidance": {
             "paragraph_words": "60-120 words; avoid >150.",
             "use_bullets_for": "discrete concepts",
             "use_numbered_for": "sequences/steps",
-            "use_tables_for": "evaluation framework, deliverables, workplan, team",
+            "use_tables_for": "framework matrix, deliverables, workplan, team",
             "avoid": ["generic AI phrases", "restating the TOR without a proposed approach",
                       "unsupported superlatives", "walls of text"],
         },
     }
 
 
-def _output_contract(section: dict) -> dict:
+def _output_contract(section: dict, framework_columns: Optional[list] = None) -> dict:
     """Describe the structured JSON the Claude session must return for this section."""
     modes = section.get("preferred_modes", ["PROSE"])
     wants_table = any(m in modes for m in
                       ("MATRIX_ROW", "DELIVERABLE_ROW", "WORKPLAN_ROW", "TEAM_ROLE", "TABLE_ROW"))
-    return {
+    contract = {
         "format": {
             "section_id": section["section_id"],
             "blocks": "list of block objects (see block_types)",
@@ -228,6 +237,12 @@ def _output_contract(section: dict) -> dict:
         "prefer_table": wants_table,
         "note": "Every mandatory slot MUST have a ledger entry. block_ids must reference real blocks.",
     }
+    if framework_columns:
+        contract["required_table_columns"] = framework_columns
+        contract["framework_note"] = (
+            "This section's matrix MUST be a table block whose columns are exactly "
+            f"{framework_columns} (assignment-type specific). One row per question/dimension.")
+    return contract
 
 
 # ---------------------------------------------------------------------------
@@ -350,13 +365,28 @@ def validate_candidate(packet: dict, candidate: dict) -> dict:
             if mn is not None:
                 _check_numeric_decision(all_text, val, mn, mx, errors, warnings)
 
-    # --- fixed-constraint contradiction (AT_MOST exceeded) ---
-    # (handled via decisions; additional guard: no fabricated ARFADA facts)
-    if _UNSUPPORTED_ARFADA.search(all_text):
-        # only an error if not accompanied by an evidence placeholder
-        if NEEDS_EVIDENCE_TAG not in all_text:
-            errors.append("unsupported ARFADA organizational claim detected without "
-                          f"{NEEDS_EVIDENCE_TAG} placeholder")
+    # --- ARFADA fact-claim validation (Phase 4) ---
+    # An ARFADA organizational/numeric claim is allowed ONLY if its value matches a
+    # verified fact in the packet (verified_arfada_facts), OR it is accompanied by a
+    # NEEDS_ARFADA_EVIDENCE placeholder. Otherwise it is an UNSUPPORTED_ARFADA_CLAIM.
+    verified_values = _verified_fact_values(packet.get("verified_arfada_facts", []))
+    for m in _UNSUPPORTED_ARFADA.finditer(all_text):
+        claim = m.group(0)
+        # extract the number in the claim (if any) and check it against verified facts
+        nums = re.findall(r"\d[\d,]*", claim)
+        supported = False
+        for n in nums:
+            norm = n.replace(",", "")
+            if norm in verified_values:
+                supported = True
+                break
+        if supported:
+            continue
+        if NEEDS_EVIDENCE_TAG in all_text:
+            continue  # section flagged its gap honestly
+        errors.append(f"UNSUPPORTED_ARFADA_CLAIM: '{claim[:60]}' does not map to a verified "
+                      f"fact_id, TOR fact, or approved decision, and no {NEEDS_EVIDENCE_TAG} "
+                      f"placeholder is present")
 
     # --- evidence sections must flag needs when claiming org facts ---
     if packet.get("needs_arfada_evidence"):
@@ -387,6 +417,16 @@ def _check_numeric_decision(text: str, approved: float, mn: Optional[float],
         f"approved decision value {approved_int} not used in section; the approved "
         f"proposal value must appear exactly (do not substitute the TOR minimum or "
         f"another number)")
+
+
+def _verified_fact_values(facts: list) -> set:
+    """Collect the numeric values present in verified ARFADA facts (for claim matching)."""
+    values: set = set()
+    for f in facts or []:
+        v = str(f.get("value", ""))
+        for n in re.findall(r"\d[\d,]*", v):
+            values.add(n.replace(",", ""))
+    return values
 
 
 def _result(valid, errors, warnings, failed_slots, status):

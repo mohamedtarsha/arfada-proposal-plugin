@@ -1,18 +1,18 @@
 ---
 name: arfada-proposal
 description: >
-  ARFADA Proposal Assistant — structured TOR analysis, human decision review,
-  and controlled proposal draft generation for ARFADA team members. Invoke with
-  /arfada-proposal to analyze a TOR, review proposal decisions, or generate a draft.
-version: 0.4.0
+  ARFADA Proposal Assistant — TOR analysis, human decision review, controlled
+  draft generation, and professional Word export for ARFADA team members. Invoke
+  with /arfada-proposal to analyze a TOR, review decisions, generate, or export.
+version: 0.5.0
 trigger: /arfada-proposal
 ---
 
 # ARFADA Proposal Assistant
 
-**Plugin version:** 0.4.0
+**Plugin version:** 0.5.0
 **Publisher:** ARFADA
-**Status:** Phase 3 — Controlled Proposal Draft Generation active
+**Status:** Phase 4 — Verified Knowledge + Professional DOCX active
 
 ---
 
@@ -21,24 +21,49 @@ trigger: /arfada-proposal
 When invoked without context, print:
 
 ```
-ARFADA Proposal Assistant v0.4.0
+ARFADA Proposal Assistant v0.5.0
 
 Available now:
   1. Analyze TOR               — provide a .pdf or .docx file
   2. Review Proposal Decisions — review and record proposal choices
   3. Generate Proposal Draft   — build a TOR-grounded draft section by section
+  4. Export Word               — professional DOCX (internal review / client draft)
 
 Coming later:
-  4. Quality Review
-  5. Export Word
+  5. Final Quality Review
 ```
 
 If a run directory is already in context (from previous analysis), offer the
-relevant next step:
+relevant next step with `[run: <run_id>]`.
+
+---
+
+## Assignment type (shown after Analyze TOR)
+
+`tor_analysis.json` now carries `assignment_type` with confidence + evidence.
+After analysis, show:
+
 ```
-  2. Review Proposal Decisions  [run: <run_id>]
-  3. Generate Proposal Draft    [run: <run_id>]
+Assignment Type: <label>
+Confidence:      <HIGH|MEDIUM|LOW>
+Evidence:        <evidence snippets>
 ```
+
+If confidence is LOW, `decision_candidates.json` contains a `dec_assignment_type`
+decision. Resolve it in Decision Review BEFORE building a type-dependent blueprint —
+never silently assume Evaluation. The user picks from `allowed_options` (or OTHER).
+
+## ARFADA knowledge (verified facts)
+
+Generation packets now include `verified_arfada_facts` — the ONLY ARFADA
+organizational facts you may state (each has a `fact_id` + provenance). Numbers
+come from these facts, never recomputed. To show them on request:
+```bash
+python "<plugin_root>/scripts/query_knowledge.py" metrics
+python "<plugin_root>/scripts/query_knowledge.py" search --type EVALUATION --country Lebanon
+```
+Any ARFADA claim NOT backed by a verified fact → use a `NEEDS_ARFADA_EVIDENCE`
+placeholder. The validator rejects unsupported ARFADA claims (`UNSUPPORTED_ARFADA_CLAIM`).
 
 ---
 
@@ -413,10 +438,62 @@ explicitly asks. Continue from the next PENDING section.
 ## Constraints (Generation)
 
 - You are the generator — no separate API. Write section candidates yourself.
-- Allowed facts: TOR + approved Decision Register ONLY.
+- Allowed facts: TOR + approved Decision Register + `verified_arfada_facts` ONLY.
 - NEVER invent ARFADA organizational facts — use NEEDS_ARFADA_EVIDENCE placeholders.
+- You MAY state a `verified_arfada_facts` value (reference the fact_id in your summary).
 - NEVER contradict a TOR-fixed value or an approved decision value.
 - NEVER invent a value for an unresolved/deferred decision.
+- For the type-specific FRAMEWORK section, the matrix table columns MUST equal
+  `output_contract.required_table_columns`.
+- TEAM: never invent staff names — use "To be nominated"; preserve TOR qualification constraints.
 - No historical proposal text, no RAG, no web research in this phase.
 - Max 2 repair attempts per section; respect the validator's verdict.
 - Generated drafts (arfada-output/) are local only — never committed.
+
+---
+
+## 4. Export Word
+
+After generation, offer two professional DOCX exports.
+
+### Internal review document
+```bash
+python "<plugin_root>/scripts/render_docx.py" "<run_dir>" --internal
+```
+Shows NEEDS_ARFADA_EVIDENCE placeholders, BLOCKED_BY_DECISION notes, and a
+version/knowledge footer. For the ARFADA team.
+
+### Client draft document
+```bash
+python "<plugin_root>/scripts/render_docx.py" "<run_dir>" --client
+```
+Hides all internal IDs, fact_ids, and system notes. If unresolved evidence gaps
+remain, it is marked "DRAFT — HUMAN REVIEW REQUIRED". If a section has a hard
+unsupported-fact error, **client export fails** (exit 5) — fix the section first.
+
+Optional logo: add `--logo "<path to ARFADA logo.png>"` for the cover page.
+
+Present the result:
+```
+Word export complete — proposal_<variant>.docx
+
+Sections rendered: X   Blocked: Y
+Paragraphs: P   Tables: T   Lists: L   Headings: H
+Pre-export QA: <ok|warnings>
+```
+
+### Pre-export QA
+`render_docx.py` runs a deterministic pre-export check first (schema re-validation,
+decision values, unsupported facts, cross-TOR, client-leakage). Warnings are shown
+but do not block internal export; hard errors block both; unsupported-fact errors
+block client export.
+
+---
+
+## Constraints (Export)
+
+- DOCX is generated with python-docx only — no MS Word automation, no LibreOffice.
+- Client export must never expose internal IDs, fact_ids, or system metadata.
+- Never fabricate the ARFADA logo; use `--logo` only with an authorized local file.
+- Every exported proposal records plugin_version + knowledge_version + run_id (internal).
+- Generated DOCX (arfada-output/) is local only — never committed.
