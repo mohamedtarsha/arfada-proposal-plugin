@@ -7,7 +7,7 @@
   "plugins": [
     {
       "name": "arfada-proposal",
-      "source": "./plugin.json"
+      "source": "./"
     }
   ]
 }
