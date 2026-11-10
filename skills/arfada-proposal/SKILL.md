@@ -4,13 +4,13 @@ description: >
   ARFADA Proposal Assistant — TOR analysis, human decision review, controlled
   draft generation, and professional Word export for ARFADA team members. Invoke
   with /arfada-proposal to analyze a TOR, review decisions, generate, or export.
-version: 0.6.1
+version: 0.6.2
 trigger: /arfada-proposal
 ---
 
 # ARFADA Proposal Assistant
 
-**Plugin version:** 0.6.1
+**Plugin version:** 0.6.2
 **Publisher:** ARFADA
 **Status:** Complete + Writing DNA — TOR → decisions → knowledge → generation → DOCX → Final QA
 

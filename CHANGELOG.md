@@ -6,6 +6,38 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.6.2] — 2026-11-10
+
+### Fixed — Winning Proposal Library pairing (bugfix only; no new features)
+
+A corpus-pairing diagnostic on the real library found 8/14 project folders unpaired
+despite each containing a TOR + proposal. Two generic root causes, both fixed:
+
+1. **Word-boundary bug:** filename TOR tokens glued to `_`/`-` (e.g. `ToR_NRC`,
+   `BHA_TOR_Endline`, `RFQ_Section`, `Annex-1-ToRs`, `TOR_-_SRRVCM`, `TOR_SCI`,
+   `ToR_OXFAM`, `ToR_Telethon`) were missed because `\btor\b` finds no boundary
+   before `_` (an underscore is a word char). Replaced `\b…\b` with letters-only
+   lookarounds `(?<![a-z])…(?![a-z])` so `_`/digits/hyphens count as boundaries
+   (still rejects `tortoise`/`contractor`). Added tender / scope-of-work /
+   schedule-of-requirements / annex+TOR cues.
+2. **Cover-letter mis-pick:** a `..._Cover Letter.docx` matched proposal candidates
+   (contains "ARFADA") and outranked the real `..._Proposal.docx`. Added deterministic
+   proposal scoring: boost `proposal`/`technical`/`final`/`submitted`, demote
+   `cover letter`/`draft`/`old`/`comment`/`backup`/`annex`.
+
+Also (spec §6): **text-extractable PDF proposals now produce section exemplars**
+(`_pdf_sections` via pypdf, no OCR) instead of metadata-only; genuinely scanned/
+image-only PDFs stay metadata-only with a warning.
+
+### Real-corpus result (local, not committed)
+Project folders 14 · **Valid pairs 14** (was 6) · Ambiguous 0 · Unpaired 0 · Unreadable 0.
+Writing DNA recomputed from 14 docs: ~33-word median paragraphs, ~13.4 tables/doc,
+organizational voice; assignment types now include MIDLINE.
+
+### Tests: 280/280 (6 new pairing regressions). No generation/QA/authority changes.
+
+---
+
 ## [0.6.1] — 2026-11-10
 
 ### Added — Winning Proposal Library / ARFADA Writing DNA (style only, post-launch)

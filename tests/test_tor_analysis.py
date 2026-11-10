@@ -3618,6 +3618,89 @@ class TestExemplarScan(unittest.TestCase):
                 self.assertNotIn("Sudan", rep["countries"])
 
 
+class TestExemplarPairingRegression(unittest.TestCase):
+    """Regression for real-corpus pairing failure modes (v0.6.2 bugfix)."""
+
+    def test_underscore_glued_tor_tokens(self):
+        """TOR tokens glued to '_'/'-' must still classify (the \\b-vs-_ bug)."""
+        from engine.tor.exemplars.scan import _is_tor_name
+        for name in ["ToR_NRC.docx", "TOR_-_SRRVCM_-_Final_2.pdf",
+                     "BHA_TOR_Endline+-+May+-2026.docx", "TOR_SCI_Sudan.docx",
+                     "ToR_OXFAM_Lebanon.pdf", "Midline assessment ToR_Telethon V1.docx",
+                     "RFQ_Section_II_ScheduleofRequirements.docx",
+                     "GIZ2026-35-Annex-1-ToRs_DataCollection.pdf"]:
+            self.assertTrue(_is_tor_name(name), f"should be TOR: {name}")
+
+    def test_proposal_names_not_misread_as_tor(self):
+        from engine.tor.exemplars.scan import _is_tor_name
+        for name in ["20260602_IRC_FE_ARFADA_Proposal.docx",
+                     "20260228_Tracer Study_GIZ_Proposal_ARFADA.docx",
+                     "Baseline_Enable_Palasitne.pdf"]:
+            self.assertFalse(_is_tor_name(name), f"should NOT be TOR: {name}")
+
+    def test_cover_letter_demoted(self):
+        """A cover letter must not be picked over the real proposal."""
+        import tempfile
+        from engine.tor.exemplars.scan import _classify_docs, _pick_proposal
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = Path(tmp) / "229_Evaluation_Sudan_SC"
+            proj.mkdir(parents=True)
+            for n in ["20260517_SCI_EE_ARFADA_Cover Letter.docx",
+                      "20260517_SCI_EE_ARFADA_Proposal.docx",
+                      "BHA_TOR_Endline.docx"]:
+                (proj / n).write_bytes(b"x")
+            tors, props, others = _classify_docs(proj)
+            proposal = _pick_proposal(props, others)
+            self.assertIsNotNone(proposal)
+            self.assertIn("Proposal", proposal.name)
+            self.assertNotIn("Cover Letter", proposal.name)
+
+    def test_tor_not_demoted_as_annex_only(self):
+        """'Annex 1 - TOR' pairs (annex+TOR), but a bare 'Annex 3.docx' is not a TOR."""
+        from engine.tor.exemplars.scan import _is_tor_name
+        self.assertTrue(_is_tor_name("Annex 1 - TOR.docx"))
+        self.assertTrue(_is_tor_name("GIZ-Annex-1-ToRs.pdf"))
+        self.assertFalse(_is_tor_name("Annex 3 - Budget.docx"))
+
+    def test_pdf_proposal_extracts_sections(self):
+        """A text-extractable PDF proposal yields sections (not metadata-only)."""
+        import tempfile, sys as _s
+        _s.path.insert(0, str(_ROOT / ".mcp_deps"))
+        from engine.tor.exemplars.scan import _pdf_sections
+        # build a tiny text PDF via fpdf2
+        try:
+            from fpdf import FPDF
+        except Exception:
+            self.skipTest("fpdf2 not available")
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf = FPDF(); pdf.add_page(); pdf.set_font("Helvetica", size=12)
+            pdf.cell(0, 8, "METHODOLOGY", new_x="LMARGIN", new_y="NEXT")
+            body = ("ARFADA proposes a rigorous mixed-methods evaluation design that "
+                    "triangulates qualitative and quantitative evidence against each "
+                    "evaluation question in the terms of reference. Key informant interviews "
+                    "explore decision-maker and implementer perspectives while a structured "
+                    "household survey measures reach and outcome indicators across the target "
+                    "population. Findings are integrated through a shared analytical framework, "
+                    "with thematic coding of qualitative data and disaggregated statistical "
+                    "analysis of survey results, ensuring credible and triangulated conclusions "
+                    "that respond directly to the client's learning and accountability needs.")
+            pdf.multi_cell(0, 6, body)
+            p = Path(tmp) / "proposal.pdf"
+            pdf.output(str(p))
+            secs = _pdf_sections(p)
+            self.assertGreater(len(secs), 0)
+
+    def test_scanned_pdf_metadata_only(self):
+        """A PDF with no extractable text returns [] (metadata-only, no OCR)."""
+        import tempfile
+        from engine.tor.exemplars.scan import _pdf_sections
+        with tempfile.TemporaryDirectory() as tmp:
+            # minimal empty-text PDF
+            p = Path(tmp) / "scanned.pdf"
+            p.write_bytes(b"%PDF-1.4\n%%EOF\n")
+            self.assertEqual(_pdf_sections(p), [])
+
+
 class TestExemplarRetrieval(unittest.TestCase):
 
     def _setup(self, tmp):

@@ -3,7 +3,7 @@
 A Claude Code plugin for ARFADA staff. Brings structured TOR analysis and
 proposal drafting into Claude Code — distributed privately via GitHub.
 
-> **Status:** COMPLETE (v0.6.1) — TOR Analysis → Decision Review → Local Knowledge →
+> **Status:** COMPLETE (v0.6.2) — TOR Analysis → Decision Review → Local Knowledge →
 > Controlled Generation → Professional Word → Final Quality Review (GREEN/YELLOW/RED),
 > plus a local **Winning Proposal Library / ARFADA Writing DNA** (style only).
 > Core development done; the plugin is in team use. Future work = small bugfixes +

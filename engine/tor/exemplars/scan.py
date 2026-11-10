@@ -31,9 +31,26 @@ if _DEPS.exists() and str(_DEPS) not in sys.path:
 _DOCX = ".docx"
 _PDF = ".pdf"
 
-# filename clues
-_TOR_RE = re.compile(r"\b(tor|tors|terms?\s*of\s*reference|annex\s*\d*\s*-?\s*tor|rfp|rfq)\b", re.I)
-_PROP_RE = re.compile(r"\b(proposal|technical|arfada|offer|submission)\b", re.I)
+# Filename clues. Use LETTER boundaries (?<![a-z]) … (?![a-z]) instead of \b so a
+# token glued to an underscore/digit/hyphen still matches — e.g. "ToR_NRC",
+# "BHA_TOR_Endline", "RFQ_Section", "Annex-1-ToRs", "TOR_-_SRRVCM". A plain \b fails
+# on "tor_" because "_" is a word char (no boundary). Letters-only lookaround also
+# avoids false hits inside words ("tortoise", "contractor", "technically").
+def _lb(*cues: str) -> "re.Pattern":
+    body = "|".join(cues)
+    return re.compile(rf"(?<![a-z])(?:{body})(?![a-z])", re.I)
+
+# TOR / tender / schedule-of-requirements family (all are "the requirements doc").
+_TOR_RE = _lb("tor", "tors", "terms of reference", "terms_of_reference",
+              "tender", "rfp", "rfq", "scope of work", "schedule of requirements")
+# "annex" counts as a TOR cue only when a TOR/terms token is also present in the name.
+_ANNEX_TOR_RE = re.compile(r"annex.*(?<![a-z])tors?(?![a-z])|(?<![a-z])tors?(?![a-z]).*annex", re.I)
+_PROP_RE = _lb("proposal", "technical", "arfada", "offer", "submission")
+# demote these as proposal candidates (not the submitted technical proposal)
+_PROP_DEMOTE_RE = _lb("cover letter", "cover_letter", "coverletter", "annex",
+                      "draft", "old", "comment", "comments", "backup", "copy")
+# boost these as the submitted/final technical proposal
+_PROP_BOOST_RE = _lb("proposal", "technical", "final", "submitted")
 
 
 def exemplar_cache_dir() -> Path:
@@ -87,6 +104,50 @@ def _docx_text(p: Path) -> str:
         return ""
 
 
+def _pdf_sections(p: Path) -> list[dict]:
+    """Extract sections from a text-extractable PDF proposal (no OCR).
+
+    Splits page text into sections on short heading-like lines and classifies each
+    by keyword. Returns [] for scanned/image-only PDFs (no extractable text).
+    """
+    try:
+        from pypdf import PdfReader
+        pages = [(pg.extract_text() or "") for pg in PdfReader(str(p)).pages]
+    except Exception:
+        return []
+    text = "\n".join(pages).strip()
+    if len(text.split()) < 40:          # effectively no extractable text
+        return []
+    sections: list[dict] = []
+    cur = {"heading": "", "type": "OTHER", "paras": [], "bullets": 0, "numbered": 0, "tables": 0}
+
+    def flush():
+        if cur["paras"] or cur["heading"]:
+            sections.append({"heading": cur["heading"], "type": cur["type"],
+                             "text": "\n".join(cur["paras"]).strip(),
+                             "bullets": cur["bullets"], "numbered": cur["numbered"],
+                             "tables": 0, "paragraphs": len(cur["paras"])})
+
+    heading_re = re.compile(
+        r"^(?:\d+(?:\.\d+)*\.?\s+\S|[A-Z][A-Za-z /&-]{3,60})$")
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        looks_heading = (len(line) <= 70 and heading_re.match(line)
+                         and D.classify_section(line) != "OTHER")
+        if looks_heading:
+            flush()
+            cur = {"heading": line, "type": D.classify_section(line), "paras": [],
+                   "bullets": 0, "numbered": 0, "tables": 0}
+        else:
+            if line[:1] in "-•*–":
+                cur["bullets"] += 1
+            cur["paras"].append(line)
+    flush()
+    return [s for s in sections if s["text"]]
+
+
 def _project_dirs(root: Path) -> list[Path]:
     """A project dir is a leaf-ish folder containing at least one docx/pdf."""
     out = []
@@ -100,6 +161,10 @@ def _project_dirs(root: Path) -> list[Path]:
     return out
 
 
+def _is_tor_name(name: str) -> bool:
+    return bool(_TOR_RE.search(name) or _ANNEX_TOR_RE.search(name))
+
+
 def _classify_docs(proj: Path):
     tors, props, others = [], [], []
     for f in proj.iterdir():
@@ -109,7 +174,7 @@ def _classify_docs(proj: Path):
         if ext not in (_DOCX, _PDF):
             continue
         name = f.name
-        if _TOR_RE.search(name):
+        if _is_tor_name(name):
             tors.append(f)
         elif _PROP_RE.search(name):
             props.append(f)
@@ -118,15 +183,42 @@ def _classify_docs(proj: Path):
     return tors, props, others
 
 
+def _proposal_score(f: Path) -> int:
+    """Rank proposal candidates: prefer the submitted/final technical proposal;
+    demote cover letters / drafts / annexes; prefer DOCX over PDF only as a tiebreak
+    (a text-extractable PDF proposal is still a valid exemplar)."""
+    name = f.name
+    score = 0
+    if _PROP_BOOST_RE.search(name):
+        score += 5
+    if _PROP_DEMOTE_RE.search(name):
+        score -= 6
+    # a clear "proposal" token outweighs a generic org-name match
+    if re.search(r"(?<![a-z])proposal(?![a-z])", name, re.I):
+        score += 3
+    if f.suffix.lower() == _DOCX:
+        score += 1
+    return score
+
+
 def _pick_proposal(props: list[Path], others: list[Path]) -> Optional[Path]:
-    # prefer a DOCX proposal; fall back to any docx; then pdf
-    docx = [f for f in props if f.suffix.lower() == _DOCX]
-    if docx:
-        return docx[0]
-    if props:
-        return props[0]
-    docx_other = [f for f in others if f.suffix.lower() == _DOCX]
-    return docx_other[0] if docx_other else (others[0] if others else None)
+    """Pick the submitted technical proposal via scoring (cover letters/drafts demoted).
+
+    PDF proposals remain eligible (score tiebreak only). `others` (files that matched
+    neither TOR nor proposal cues) are considered as a last resort.
+    """
+    candidates = list(props) + [f for f in others if f.suffix.lower() in (_DOCX, _PDF)]
+    if not candidates:
+        return None
+    # drop clearly-non-proposal files (cover letters) if any real proposal remains
+    ranked = sorted(candidates, key=lambda f: -_proposal_score(f))
+    best = ranked[0]
+    # if the best scored candidate is still a demoted file AND a non-demoted exists, take that
+    if _PROP_DEMOTE_RE.search(best.name):
+        non_demoted = [f for f in ranked if not _PROP_DEMOTE_RE.search(f.name)]
+        if non_demoted:
+            best = non_demoted[0]
+    return best
 
 
 def _country_of(proj: Path, root: Path) -> str:
@@ -193,17 +285,20 @@ def scan_library(root: str | Path, cache_dir: Optional[Path] = None) -> dict:
             unreadable += 1
             warnings.append(f"Proposal not readable locally: {proj.name}")
             continue
-        if proposal.suffix.lower() != _DOCX:
-            warnings.append(f"Proposal is PDF (section extraction limited): {proj.name}")
-            # still record metadata-only exemplar
-            sections = []
-        else:
+        if proposal.suffix.lower() == _DOCX:
             try:
                 sections = D.docx_sections(proposal)
             except Exception:
                 unreadable += 1
                 warnings.append(f"Could not parse proposal DOCX: {proj.name}")
                 continue
+        else:
+            # PDF proposal: usable as an exemplar when text is extractable (no OCR).
+            sections = _pdf_sections(proposal)
+            if not sections:
+                # genuinely scanned/image-only → metadata-only, warn (not unreadable)
+                warnings.append(f"PDF proposal has no extractable text (scanned?) — "
+                                f"metadata only: {proj.name}")
 
         # infer assignment type from TOR text or folder/file names
         atype = _infer_type(tor, proj)
