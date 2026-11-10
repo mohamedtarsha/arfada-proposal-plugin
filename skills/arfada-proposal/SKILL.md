@@ -4,13 +4,13 @@ description: >
   ARFADA Proposal Assistant — TOR analysis, human decision review, controlled
   draft generation, and professional Word export for ARFADA team members. Invoke
   with /arfada-proposal to analyze a TOR, review decisions, generate, or export.
-version: 0.6.2
+version: 0.6.3
 trigger: /arfada-proposal
 ---
 
 # ARFADA Proposal Assistant
 
-**Plugin version:** 0.6.2
+**Plugin version:** 0.6.3
 **Publisher:** ARFADA
 **Status:** Complete + Writing DNA — TOR → decisions → knowledge → generation → DOCX → Final QA
 
@@ -263,98 +263,91 @@ Resolved: X / Deferred: Y / Unresolved: Z / Open: N
 Continuing from next open decision...
 ```
 
-### Step 2 — Present one decision at a time
+### Step 2 — Present one decision at a time (native option cards)
 
-For each open decision, run:
+Present each genuine proposal decision using the **native interactive
+question / selectable-option UI** (AskUserQuestion-style cards) — **one decision
+at a time**, never a wall of long prose. The descriptors are built deterministically
+from the TOR; you do not invent options.
+
+Get the next card (includes `progress_label` like "Decision 2 of 6"):
 ```bash
-python "<plugin_root>/scripts/decision_register.py" next "<run_dir>"
+python "<plugin_root>/scripts/decision_cards.py" next "<run_dir>" --language <en|ar>
 ```
+Use `--language ar` when the user is speaking Arabic; otherwise `en`. (You can also
+fetch all actionable cards at once with `decision_cards.py list <run_dir>` if you
+prefer to pre-read them — but still show ONE card to the user at a time.)
 
-If `decision` is null: all decisions reviewed — go to summary.
+If `card` is null: all decisions reviewed — go to Step 4 (summary).
 
-Format and present:
+Render the returned `card` as a native question:
+- **Question** = `card.question` (short). If present, show `card.tor_context` as a
+  single one-line helper under the question (this is INFORMATION, not an option).
+- **Progress** = `card.progress_label` (e.g. "Decision 2 of 6") as a short indicator.
+- **Options** = `card.options`, each as a selectable choice using its `label`.
+  - Exactly one option may carry `recommended: true` — mark it **"Recommended"** but
+    **NEVER auto-select it**. The user must actively choose.
+  - When `card.supports_custom` is true, the "Other / custom" option lets the user
+    type their own answer (it is still validated against TOR constraints).
+- The header chip = `card.header`.
 
-```
----
-Decision [N] of [total]
+**Separate INFORMATION from QUESTIONS.** Fixed TOR requirements are NOT questions and
+never appear as cards (the builder excludes them). If the user asks about a fixed value,
+see "Fixed requirement protection".
 
-TOR requirement:
-"<source_text>"
+**Fallback (native UI unavailable).** If you cannot render selectable cards, show
+`card.fallback_numbered` — a VERY SHORT numbered list (question + options + "reply with
+the number"). Do NOT fall back to long narrative paragraphs.
 
-TOR constraint:
-<constraint_type>: <minimum or maximum or range>
+### Step 3 — Record the user's choice immediately
 
-Decision question:
-<question>
+Map the **selected option's `action`** to a `decision_register.py` command and run it
+right away, so each decision is persisted before moving to the next card.
 
-Your options:
-  [value]  — enter a number or text
-  defer    — defer to inception phase
-  skip     — skip for now (can return later)
-  unresolved — team reviewed, intentionally left open
-  show source — show full TOR source text
-```
+- `action: "set"` → use the option's `value`:
+  ```bash
+  python "<plugin_root>/scripts/decision_register.py" set "<run_dir>" "<decision_id>" <value>
+  ```
+  Numeric values are passed bare; text values are quoted (JSON-parsed).
+  If exit code 4 (validation failure): show the stderr message and re-present the card.
+  On success confirm briefly: `✓ Recorded: <value>`.
 
-**Constraint display format:**
-- AT_LEAST → "Minimum: X (proposal must be >= X)"
-- AT_MOST → "Maximum: X (proposal must be <= X)"
-- RANGE → "Allowed range: X-Y (proposal must be within this range)"
-- APPROX → "Approximate TOR target: ~X (not an open choice — use a reasonable close number)"
-- NONE → no numeric constraint
+- `action: "custom"` (the "Other" option) → prompt the user for their exact value,
+  then run the same `set` command. The register validates it against TOR bounds; on
+  exit code 4, show the error and ask again. **Custom answers are still validated.**
 
-**Do NOT show APPROX as "open choice" — it is a TOR approximate target.**
+- `action: "defer"` → ask for a brief reason, then:
+  ```bash
+  python "<plugin_root>/scripts/decision_register.py" defer "<run_dir>" "<decision_id>" "<reason>"
+  ```
 
-### Step 3 — Process the user's choice
+- `action: "unresolved"` → (optionally ask for a note, then):
+  ```bash
+  python "<plugin_root>/scripts/decision_register.py" unresolved "<run_dir>" "<decision_id>" "<notes>"
+  ```
 
-**If the user enters a value:**
+- `action: "recommend"` (the "Show me a recommendation" option) — two steps, never
+  auto-approved:
+  1. Analyze the TOR context, choose a value, and store it as a NON-authoritative
+     recommendation:
+     ```bash
+     python "<plugin_root>/scripts/decision_register.py" recommend "<run_dir>" "<decision_id>" "<value>"
+     ```
+  2. Re-present the SAME card with the recommended value shown. The user must still
+     actively approve it:
+     ```bash
+     python "<plugin_root>/scripts/decision_register.py" approve "<run_dir>" "<decision_id>"
+     ```
+  Only after `approve` is the decision RESOLVED.
 
-For numeric decisions, run:
-```bash
-python "<plugin_root>/scripts/decision_register.py" set "<run_dir>" "<decision_id>" <value>
-```
+**NEVER auto-select the recommended option and NEVER auto-approve a recommendation.**
+The "Recommended" marker is guidance only; resolution always requires an explicit user
+selection.
 
-If exit code 4 (validation failure): show the error message from stderr and ask again.
-If success: confirm: `✓ Decision recorded: <value>`
-
-For non-numeric (methodology, approach, etc.):
-```bash
-python "<plugin_root>/scripts/decision_register.py" set "<run_dir>" "<decision_id>" "<text value>"
-```
-Values are JSON-parsed: a string like `"mixed-methods approach"` becomes a string.
-
-**If the user says "defer":**
-```bash
-python "<plugin_root>/scripts/decision_register.py" defer "<run_dir>" "<decision_id>" "<reason>"
-```
-Ask: "Brief reason for deferral?" then record it.
-
-**If the user says "skip":**
+A `skip` command remains available if the user explicitly asks to skip a decision:
 ```bash
 python "<plugin_root>/scripts/decision_register.py" skip "<run_dir>" "<decision_id>"
 ```
-
-**If the user says "unresolved":**
-```bash
-python "<plugin_root>/scripts/decision_register.py" unresolved "<run_dir>" "<decision_id>" "<notes>"
-```
-
-**If the user says "show source":**
-Display the full `source_text` from the current decision.
-
-**Recommendation flow:**
-
-If the user asks "What do you recommend?":
-1. Analyze the TOR context and suggest a value
-2. Run: `python scripts/decision_register.py recommend "<run_dir>" "<decision_id>" "<value>"`
-3. Show: "Recommendation: <value>. Type 'approve' to accept, or enter a different value."
-
-If user says "approve":
-```bash
-python "<plugin_root>/scripts/decision_register.py" approve "<run_dir>" "<decision_id>"
-```
-Only then mark as RESOLVED.
-
-**NEVER automatically resolve a decision based on a recommendation without user approval.**
 
 ### Step 4 — After all decisions reviewed
 
@@ -419,26 +412,37 @@ Explain:
 
 ## Arabic TOR requirements
 
-When source text is in Arabic, display it as-is (preserved UTF-8).
-Questions may be shown in Arabic when the source is Arabic.
-Constraint labels remain consistent regardless of language.
+When the user is speaking Arabic, call `decision_cards.py` with `--language ar`. The
+card's `question`, `tor_context`, and option **labels** come back in Arabic
+(موصى به = Recommended, أخرى = Other, تأجيل = Defer, …), while the **canonical value
+stored** in the register is unchanged (e.g. `30`, `INCLUDE`, `DEFER_TO_INCEPTION`).
+The user reads Arabic; the register stays canonical.
 
-Example format for Arabic TOR:
+Source text is always displayed as-is (preserved UTF-8). Constraint bounds and stored
+values remain consistent regardless of display language.
+
+Example Arabic card (rendered natively, one at a time):
 
 ```
-متطلب الـ TOR:
-"يجب إجراء ما لا يقل عن 30 مقابلة KII"
+القرار 2 من 6
 
-الحد الأدنى: 30 (يجب أن يكون العدد المقترح >= 30)
-
-القرار المطلوب:
 ما العدد الذي تريد أرفادة اقتراحه للمقابلات؟
+الـTOR: يجب إجراء ما لا يقل عن 30 مقابلة KII
+
+◦ 30 — موصى به
+◦ إدخال قيمة محددة
 ```
 
 ---
 
 ## Constraints (Decision Review)
 
+- Present decisions as native selectable-option cards, ONE at a time, with a short
+  progress indicator — never long narrative questions.
+- Options come only from `decision_cards.py` (TOR constraints / valid semantics) —
+  NEVER invent options.
+- Exactly one option may be marked "Recommended"; NEVER auto-select or auto-approve it.
+- Custom ("Other") answers are still validated against TOR constraints.
 - NEVER auto-resolve a decision without explicit user confirmation.
 - NEVER modify TOR-fixed requirements (they don't appear in the decision register).
 - NEVER invent TOR constraints not in decision_candidates.json.

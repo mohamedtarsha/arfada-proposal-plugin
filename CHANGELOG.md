@@ -6,6 +6,42 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.6.3] — 2026-11-10
+
+### Changed — Decision Review UX: native interactive option cards (UX patch only)
+
+Proposal Decision Review now uses Claude Code's **native interactive
+question / selectable-option UI** (AskUserQuestion-style cards) instead of long
+narrative questions. **No engine change:** decision semantics, TOR extraction,
+generation, Writing DNA, and Final QA are untouched; decisions still persist through
+the same `decision_register.py` with the same validation.
+
+- New `engine/tor/decision_ui.py` — deterministic descriptor builder. Each genuine
+  human decision becomes an option card: short question, optional one-line TOR context
+  (INFORMATION separated from the QUESTION), and options drawn **only** from TOR
+  constraints / valid semantics (never invented). Exactly one option may be marked
+  **"Recommended"**, but it is **never auto-selected or auto-approved**. Shapes:
+  ENUM → allowed options + "Other"; small RANGE → each value (midpoint recommended) +
+  "Other"; wide RANGE → recommended midpoint + "Enter exact"; AT_LEAST → minimum
+  (recommended) + "Enter exact"; DEFERRED → "Determine during inception" (recommended)
+  / set now / show recommendation / leave unresolved; OPTIONAL_CHOICE → include /
+  do-not-include / defer / unresolved. **FIXED requirements never become cards.**
+  Numeric bounds and units carried through; custom ("Other") answers are still
+  validated. Arabic labels (موصى به / أخرى / تأجيل …) with **canonical values stored
+  internally**. Each card also carries a VERY SHORT numbered `fallback_numbered` for
+  when the native UI is unavailable. Optional one-concise-card `expired_date_descriptor`
+  for TORs whose dates are already past.
+- New `scripts/decision_cards.py` — `list` / `next` emit ordered descriptors from the
+  live register (merged with candidate `allowed_options`) with a progress indicator
+  ("Decision 2 of 6"). Presentation only — it never writes decisions.
+- SKILL "Review Proposal Decisions" rewritten: one card at a time, record immediately,
+  recommendation routes `recommend → approve` (never auto-approve), Arabic via
+  `--language ar`, short numbered fallback. Summary step unchanged.
+
+### Tests: +33 (24 descriptor, 9 Jordan-endline card-flow regression). No generation run.
+
+---
+
 ## [0.6.2] — 2026-11-10
 
 ### Fixed — Winning Proposal Library pairing (bugfix only; no new features)
