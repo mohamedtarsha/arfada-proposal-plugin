@@ -6,6 +6,54 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.6.0] — 2026-11-10
+
+### Added — Final Quality Review (PE7 lineage) — last core development phase
+
+Deterministic proposal acceptance over the existing run artifacts. No model call,
+no network, no new content. Returns **GREEN / YELLOW / RED**. GREEN = "automated QA
+passed — ready for final HUMAN review", never "send blind".
+
+**New: `engine/tor/final_qa.py`** — `Finding` model (stable id, severity, blocks_client)
++ `run_final_qa()` running 19 check families:
+- artifact consistency (cross-run → CRITICAL), requirement coverage (verified against
+  actual generated content, not just the ledger), ledger-substantive (false-coverage
+  detection), ownership (orphan/duplicate/client-as-bidder), fixed TOR constraints,
+  decision compliance (approved value present; below-minimum conflict → CRITICAL;
+  fabricated unresolved decision → CRITICAL), personnel (unapproved named staff),
+  ARFADA fact support (unsupported org number → ERROR), numeric contradictions across
+  sections, assignment-type terminology, section completeness, framework matrix
+  (missing → CRITICAL), deliverables (missing mandatory → CRITICAL), workplan, team,
+  submission, readability (long paragraphs), duplication, and client-DOCX leakage
+  (internal IDs / local paths → CRITICAL).
+- GREEN/YELLOW/RED rollup; QA `fingerprint` (TOR identity + decision rev + snapshot id +
+  section hashes + plugin version) so a GREEN applies only to the exact reviewed
+  artifacts; `build_repair_plan()` (per-section, max 2 cycles, never touches decisions);
+  Markdown report.
+
+**New scripts:**
+- `final_qa.py <run_dir> [--repair-plan]` — writes final_qa.json + final_qa.md; exit 0/10/20
+- `export_final.py <run_dir> [--confirm]` — gated `proposal_final.docx`: GREEN exports,
+  YELLOW needs --confirm, RED blocked (exit 20). Re-runs QA first (no stale GREEN).
+  Final = validated client content; no new content introduced.
+
+**SKILL.md v0.6.0:** Final Quality Review workflow (summary, drill-down, bounded repair,
+gated export, invalidation). Menu now 6 actions.
+
+### Validated (synthetic cases)
+- A compliant proposal → **GREEN** (24/24 mandatory) → export allowed
+- below-minimum KII count → **RED** → export blocked (exit 20)
+- long paragraph only → **YELLOW** → export needs --confirm (exit 10 → 0 + proposal_final.docx)
+- missing mandatory section → RED; fabricated unresolved decision → RED; cross-run → RED;
+  unsupported ARFADA number → finding; numeric contradiction → finding; unapproved named
+  staff → finding; fingerprint changes on section/decision edit
+
+### Tests: 254/254 (19 new Final QA tests). No Anthropic API, no VPS, no MCP.
+
+### End of core development — plugin is READY FOR TEAM USE.
+
+---
+
 ## [0.5.2] — 2026-11-10
 
 ### Added — Phase 4.2 Local / synced knowledge folder (OAuth-free, PRIMARY source)

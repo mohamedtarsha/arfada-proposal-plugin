@@ -4,15 +4,15 @@ description: >
   ARFADA Proposal Assistant — TOR analysis, human decision review, controlled
   draft generation, and professional Word export for ARFADA team members. Invoke
   with /arfada-proposal to analyze a TOR, review decisions, generate, or export.
-version: 0.5.2
+version: 0.6.0
 trigger: /arfada-proposal
 ---
 
 # ARFADA Proposal Assistant
 
-**Plugin version:** 0.5.2
+**Plugin version:** 0.6.0
 **Publisher:** ARFADA
-**Status:** Phase 4.2 — Local / synced knowledge folder + Professional DOCX active
+**Status:** Complete — TOR analysis → decisions → knowledge → generation → DOCX → Final QA
 
 ---
 
@@ -21,17 +21,14 @@ trigger: /arfada-proposal
 When invoked without context, print:
 
 ```
-ARFADA Proposal Assistant v0.5.2
+ARFADA Proposal Assistant v0.6.0
 
-Available now:
   1. Analyze TOR               — provide a .pdf or .docx file
   2. Review Proposal Decisions — review and record proposal choices
   3. Refresh ARFADA Knowledge  — scan the local ARFADA Knowledge folder
   4. Generate Proposal Draft   — build a TOR-grounded draft section by section
   5. Export Word               — professional DOCX (internal review / client draft)
-
-Coming later:
-  6. Final Quality Review
+  6. Final Quality Review      — deterministic GREEN/YELLOW/RED acceptance + gated final
 
 Also: "Set ARFADA Knowledge Folder", "ARFADA Knowledge Status"
 ```
@@ -577,3 +574,87 @@ block client export.
 - Never fabricate the ARFADA logo; use `--logo` only with an authorized local file.
 - Every exported proposal records plugin_version + knowledge_version + run_id (internal).
 - Generated DOCX (arfada-output/) is local only — never committed.
+
+---
+
+## 6. Final Quality Review
+
+Deterministic acceptance over all run artifacts. Produces a **GREEN / YELLOW / RED**
+verdict. No model call. **GREEN means "automated QA passed — ready for final HUMAN
+review", NOT "send blind".**
+
+### Run it
+```bash
+python "<plugin_root>/scripts/final_qa.py" "<run_dir>"
+```
+Writes `final_qa.json` + `final_qa.md`. Exit code: 0 GREEN / 10 YELLOW / 20 RED.
+
+Present the concise summary:
+```
+FINAL QUALITY REVIEW — <GREEN|YELLOW|RED>
+
+Mandatory requirements: X/Y addressed
+Critical failures: C   Errors: E   Warnings: W
+Decisions respected: R/T
+
+<list critical failures, then top warnings>
+
+Recommendation:
+  GREEN  → Ready for final human review.
+  YELLOW → Review warnings, then export with confirmation.
+  RED    → Fix critical issues before any client deliverable.
+```
+
+### What it checks
+Requirement coverage (verified against actual content, not just the ledger),
+ownership (orphans/duplicates/client-as-bidder), fixed TOR constraints, approved
+decision compliance (and fabricated-decision detection), ARFADA fact support,
+numeric contradictions across sections, assignment-type terminology, section
+completeness, framework matrix, deliverables, workplan, team, submission, readability,
+duplication, and **client-DOCX leakage** (internal IDs / local paths → CRITICAL).
+
+### Verdict rules
+- **RED** — a mandatory requirement missing, a fixed-TOR contradiction, a fabricated
+  decision, an unsupported critical fact, wrong client/country, a missing mandatory
+  deliverable/framework, a hard generation failure, or client-DOCX internal leakage.
+- **YELLOW** — no critical failures but material errors/warnings or human-review items.
+- **GREEN** — mandatory coverage adequate, no critical failures, facts/decisions/
+  constraints valid.
+
+### Drill-down
+On request: `show critical issues`, `show warnings`, `show missing requirements`,
+`show requirement <id>`, `show decision compliance`, `show fact traceability`,
+`show contradictions`, `show QA by section` — read `final_qa.json` and filter.
+
+### Repair (bounded)
+```bash
+python "<plugin_root>/scripts/final_qa.py" "<run_dir>" --repair-plan
+```
+Gives a per-section repair plan. Regenerate ONLY the listed sections (max 2 cycles
+each), re-validate them, then re-run Final QA. **NEVER** change an approved human
+decision (sample count, staff, methodology choice, deferral, assignment type) to make
+QA pass — human decisions are authoritative.
+
+### Export Final (gated)
+```bash
+python "<plugin_root>/scripts/export_final.py" "<run_dir>"            # GREEN only
+python "<plugin_root>/scripts/export_final.py" "<run_dir>" --confirm  # YELLOW w/ confirmation
+```
+- **GREEN** → produces `proposal_final.docx` (validated client content, no new content).
+- **YELLOW** → requires explicit user confirmation ("Export final despite QA warnings?").
+- **RED** → blocked (exit 20); no client deliverable. The internal review DOCX stays available.
+`export_final.py` re-runs QA first, so a stale GREEN never slips through.
+
+### Invalidation
+A GREEN applies only to the exact reviewed artifacts (QA `fingerprint`). If the
+proposal, Decision Register, or Knowledge Snapshot changes, re-run Final QA — do not
+reuse a stale GREEN.
+
+---
+
+## Constraints (Final QA)
+
+- Final QA is deterministic — no API, no network, no new content.
+- GREEN ≠ "skip human review." Always recommend a final human read before submission.
+- RED blocks the client deliverable; YELLOW needs confirmation; only GREEN is clean.
+- Never auto-repair an approved human decision to force a pass.

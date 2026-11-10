@@ -3,9 +3,19 @@
 A Claude Code plugin for ARFADA staff. Brings structured TOR analysis and
 proposal drafting into Claude Code — distributed privately via GitHub.
 
-> **Status:** Phase 4.2 — TOR Analysis + Decision Review + Controlled Generation +
-> **Local/synced ARFADA knowledge folder** + Professional Word export.
-> Final quality review planned for a later phase.
+> **Status:** COMPLETE (v0.6.0) — TOR Analysis → Decision Review → Local Knowledge →
+> Controlled Generation → Professional Word → **Final Quality Review (GREEN/YELLOW/RED)**.
+> Core development done; the plugin is in team use. Future work = small bugfixes +
+> real-TOR tuning from actual usage.
+
+### Final Quality Review (v0.6.0)
+
+`final_qa.py <run_dir>` runs deterministic acceptance over all artifacts — requirement
+coverage (verified against real content), decision compliance, ARFADA fact support,
+numeric contradictions, framework/deliverables/workplan/team/submission, and
+client-DOCX leakage — and returns **GREEN / YELLOW / RED**. `export_final.py` gates the
+final client DOCX: GREEN exports, YELLOW needs `--confirm`, RED is blocked. GREEN means
+"ready for final **human** review", never "send blind". No API, no VPS, no MCP.
 
 ### ARFADA knowledge (v0.5.2) — local folder, OAuth-free
 

@@ -3106,5 +3106,353 @@ class TestLocalDocxIntegration(unittest.TestCase):
                     self.assertNotIn("ARFADA Knowledge", text)
 
 
+# ===========================================================================
+# v0.6.0 tests: Final Quality Review (PE7)
+# ===========================================================================
+
+def _complete_run(tmp, *, break_missing=False, break_number=False, warn_long=False,
+                  fabricate_decision=False):
+    """Build a run and generate every section. Returns run_dir. Uses subprocess CLIs."""
+    import subprocess, json as _json
+    env = {**os.environ}
+
+    def run(args):
+        r = subprocess.run(["python"] + args, capture_output=True, cwd=str(_ROOT), env=env)
+        return r.returncode, r.stdout.decode("utf-8"), r.stderr.decode("utf-8")
+
+    from scripts.analyze_tor import analyze
+    result = analyze(EN_DOCX, tmp)
+    run_dir = Path(result["output_dir"])
+
+    from engine.tor.register import init_register, set_decision, save_register
+    reg = init_register(run_dir)
+    for e in reg.decisions:
+        if e.requirement_id == "assignment_type":
+            set_decision(reg, e.decision_id, "EVALUATION")
+        elif e.minimum is not None:
+            set_decision(reg, e.decision_id, int(e.minimum) + 5)
+        else:
+            set_decision(reg, e.decision_id, "mixed-methods design")
+    save_register(reg, run_dir)
+
+    if fabricate_decision:
+        # inject a fabricated value on an OPEN decision (post-hoc tamper)
+        regdoc = _json.loads((run_dir / "decision_register.json").read_text(encoding="utf-8"))
+        if regdoc["decisions"]:
+            regdoc["decisions"][0]["decision_status"] = "OPEN"
+            regdoc["decisions"][0]["selected_value"] = 999
+            (run_dir / "decision_register.json").write_text(
+                _json.dumps(regdoc), encoding="utf-8")
+
+    run(["scripts/build_blueprint.py", str(run_dir)])
+    bp = _json.loads((run_dir / "proposal_blueprint.json").read_text(encoding="utf-8"))
+    status = _json.loads((run_dir / "generation_status.json").read_text(encoding="utf-8"))
+
+    for sec in sorted(bp["sections"], key=lambda s: s["sequence"]):
+        sid = sec["section_id"]
+        st = status["sections"].get(sid, {}).get("status")
+        if st == "BLOCKED_BY_DECISION":
+            continue
+        if break_missing and sid == "METHODOLOGY":
+            continue  # skip entirely → mandatory methodology requirements MISSING
+        rc, o, e = run(["scripts/prepare_section.py", str(run_dir), sid])
+        if rc != 0:
+            continue
+        pk = _json.loads(o)
+        slots = pk["mandatory_slots"]
+        blocks = [{"block_id": "b1", "type": "paragraph",
+                   "text": f"ARFADA proposes a rigorous, TOR-grounded approach for the "
+                           f"{sid.lower()} explaining purpose, methods, respondents, and how "
+                           f"findings are integrated through a shared analytical framework."}]
+        avals = [str(int(ad["selected_value"])) for ad in pk.get("applied_decisions", [])
+                 if ad.get("status") == "RESOLVED" and isinstance(ad.get("selected_value"), (int, float))]
+        if avals:
+            blocks[0]["text"] += " The proposal commits to " + ", ".join(avals) + \
+                                 " data-collection activities as approved."
+        if pk.get("framework_columns"):
+            cols = pk["framework_columns"]
+            blocks.append({"block_id": "tb", "type": "table", "columns": cols,
+                           "rows": [["Q1"] + ["x"] * (len(cols) - 1),
+                                    ["Q2"] + ["y"] * (len(cols) - 1)]})
+        if sid == "DELIVERABLES":
+            blocks.append({"block_id": "dt", "type": "table",
+                           "columns": ["#", "Deliverable", "Timing"],
+                           "rows": [["1", "Inception Report", "10 days"],
+                                    ["2", "Final Report", "45 days"]]})
+        if warn_long and sid == "METHODOLOGY":
+            blocks.append({"block_id": "lp", "type": "paragraph",
+                           "text": " ".join(["word"] * 200)})
+        if break_number and sid == "METHODOLOGY":
+            blocks.append({"block_id": "bn", "type": "paragraph",
+                           "text": "We will conduct 25 KIIs only."})
+        ledger = [{"slot_id": s["slot_id"], "requirement_id": s["requirement_id"],
+                   "block_ids": ["b1"], "response_summary": "addressed", "status": "ADDRESSED"}
+                  for s in slots]
+        if break_missing and sid == "METHODOLOGY" and ledger:
+            ledger = ledger[:-1]
+        cand = {"section_id": sid, "blocks": blocks, "requirement_response_ledger": ledger}
+        cp = run_dir / f"_c_{sid}.json"
+        cp.write_text(_json.dumps(cand), encoding="utf-8")
+        run(["scripts/validate_section.py", str(run_dir), sid, str(cp)])
+
+    run(["scripts/assemble_draft.py", str(run_dir)])
+    run(["scripts/render_docx.py", str(run_dir), "--client"])
+    return run_dir, run
+
+
+class TestFinalQAVerdicts(unittest.TestCase):
+
+    def test_compliant_green(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                from engine.tor.final_qa import run_final_qa
+                run_dir, _ = _complete_run(tmp)
+                rep = run_final_qa(run_dir)
+                self.assertEqual(rep["overall_status"], "GREEN",
+                                 f"criticals: {[f['message'] for f in rep['critical_failures']]}")
+                self.assertEqual(rep["summary"]["mandatory_addressed"],
+                                 rep["summary"]["mandatory_requirements"])
+
+    def test_broken_red(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                from engine.tor.final_qa import run_final_qa
+                run_dir, _ = _complete_run(tmp, break_number=True)
+                rep = run_final_qa(run_dir)
+                self.assertEqual(rep["overall_status"], "RED")
+                self.assertGreater(len(rep["critical_failures"]), 0)
+
+    def test_warnings_yellow(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                from engine.tor.final_qa import run_final_qa
+                run_dir, _ = _complete_run(tmp, warn_long=True)
+                rep = run_final_qa(run_dir)
+                self.assertEqual(rep["overall_status"], "YELLOW")
+                self.assertEqual(rep["summary"]["critical_failures"], 0)
+
+    def test_missing_mandatory_red(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                from engine.tor.final_qa import run_final_qa
+                run_dir, _ = _complete_run(tmp, break_missing=True)
+                rep = run_final_qa(run_dir)
+                self.assertEqual(rep["overall_status"], "RED")
+
+    def test_fabricated_decision_red(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                from engine.tor.final_qa import run_final_qa
+                run_dir, _ = _complete_run(tmp, fabricate_decision=True)
+                rep = run_final_qa(run_dir)
+                self.assertEqual(rep["overall_status"], "RED")
+                self.assertTrue(any(f["check"] == "DECISION_COMPLIANCE"
+                                    for f in rep["critical_failures"]))
+
+
+class TestFinalQAChecks(unittest.TestCase):
+    """Unit-level checks on synthetic artifacts."""
+
+    def _ctx_report(self, tmp, mutate=None):
+        from engine.tor.final_qa import run_final_qa
+        run_dir, _ = _complete_run(tmp)
+        if mutate:
+            mutate(run_dir)
+        return run_final_qa(run_dir), run_dir
+
+    def test_cross_run_contamination_red(self):
+        import tempfile, json as _json
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                def mutate(rd):
+                    bp = _json.loads((rd / "proposal_blueprint.json").read_text(encoding="utf-8"))
+                    bp["run_id"] = "WRONG_RUN"
+                    (rd / "proposal_blueprint.json").write_text(_json.dumps(bp), encoding="utf-8")
+                rep, _ = self._ctx_report(tmp, mutate)
+                self.assertEqual(rep["overall_status"], "RED")
+                self.assertTrue(any(f["check"] == "ARTIFACT_CONSISTENCY"
+                                    for f in rep["critical_failures"]))
+
+    def test_false_ledger_coverage_warning(self):
+        import tempfile, json as _json
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                def mutate(rd):
+                    # replace a section with a trivial response
+                    sdir = rd / "generated_sections"
+                    for f in sdir.glob("*.json"):
+                        cand = _json.loads(f.read_text(encoding="utf-8"))
+                        if cand["requirement_response_ledger"]:
+                            cand["blocks"] = [{"block_id": "b1", "type": "paragraph",
+                                               "text": "Sampling will be conducted."}]
+                            for e in cand["requirement_response_ledger"]:
+                                e["block_ids"] = ["b1"]
+                            f.write_text(_json.dumps(cand), encoding="utf-8")
+                            break
+                rep, _ = self._ctx_report(tmp, mutate)
+                self.assertTrue(any(f["check"] == "LEDGER_VERIFICATION"
+                                    for f in rep["findings"]))
+
+    def test_unsupported_arfada_fact_error(self):
+        import tempfile, json as _json
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                def mutate(rd):
+                    sdir = rd / "generated_sections"
+                    ctx = sdir / "CONTEXT.json"
+                    if ctx.exists():
+                        cand = _json.loads(ctx.read_text(encoding="utf-8"))
+                        cand["blocks"].append({"block_id": "x", "type": "paragraph",
+                                               "text": "ARFADA has completed 777 evaluations."})
+                        ctx.write_text(_json.dumps(cand), encoding="utf-8")
+                rep, _ = self._ctx_report(tmp, mutate)
+                self.assertTrue(any(f["check"] == "ARFADA_FACT" for f in rep["findings"]))
+
+    def test_numeric_contradiction_detected(self):
+        import tempfile, json as _json
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                def mutate(rd):
+                    sdir = rd / "generated_sections"
+                    # put 40 KIIs in one section, 50 KIIs in another
+                    files = list(sdir.glob("*.json"))
+                    for i, f in enumerate(files[:2]):
+                        cand = _json.loads(f.read_text(encoding="utf-8"))
+                        n = "40" if i == 0 else "50"
+                        cand["blocks"].append({"block_id": f"kc{i}", "type": "paragraph",
+                                               "text": f"We will conduct {n} KIIs."})
+                        f.write_text(_json.dumps(cand), encoding="utf-8")
+                rep, _ = self._ctx_report(tmp, mutate)
+                self.assertTrue(any(f["check"] == "CONTRADICTION" for f in rep["findings"]))
+
+    def test_unapproved_staff_error(self):
+        import tempfile, json as _json
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                def mutate(rd):
+                    sdir = rd / "generated_sections"
+                    team = sdir / "TEAM.json"
+                    if team.exists():
+                        cand = _json.loads(team.read_text(encoding="utf-8"))
+                        cand["blocks"].append({"block_id": "nm", "type": "paragraph",
+                                               "text": "The team is led by Dr Ahmed as Team Leader."})
+                        team.write_text(_json.dumps(cand), encoding="utf-8")
+                rep, _ = self._ctx_report(tmp, mutate)
+                self.assertTrue(any(f["check"] == "PERSONNEL" for f in rep["findings"]))
+
+    def test_long_paragraph_warning(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                from engine.tor.final_qa import run_final_qa
+                run_dir, _ = _complete_run(tmp, warn_long=True)
+                rep = run_final_qa(run_dir)
+                self.assertTrue(any(f["check"] == "READABILITY" for f in rep["findings"]))
+
+
+class TestFinalQAFingerprint(unittest.TestCase):
+
+    def test_fingerprint_changes_on_section_edit(self):
+        import tempfile, json as _json
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                from engine.tor.final_qa import run_final_qa
+                run_dir, _ = _complete_run(tmp)
+                fp1 = run_final_qa(run_dir)["fingerprint"]
+                # edit a section
+                for f in (run_dir / "generated_sections").glob("*.json"):
+                    cand = _json.loads(f.read_text(encoding="utf-8"))
+                    cand["blocks"].append({"block_id": "zz", "type": "paragraph",
+                                           "text": "An additional note was added here."})
+                    f.write_text(_json.dumps(cand), encoding="utf-8")
+                    break
+                fp2 = run_final_qa(run_dir)["fingerprint"]
+                self.assertNotEqual(fp1, fp2)
+
+    def test_fingerprint_changes_on_decision_edit(self):
+        import tempfile, json as _json
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                from engine.tor.final_qa import run_final_qa
+                run_dir, _ = _complete_run(tmp)
+                fp1 = run_final_qa(run_dir)["fingerprint"]
+                reg = _json.loads((run_dir / "decision_register.json").read_text(encoding="utf-8"))
+                reg["updated_at"] = "2099-01-01T00:00:00+00:00"
+                (run_dir / "decision_register.json").write_text(_json.dumps(reg), encoding="utf-8")
+                fp2 = run_final_qa(run_dir)["fingerprint"]
+                self.assertNotEqual(fp1, fp2)
+
+
+class TestFinalExportGating(unittest.TestCase):
+
+    def _run(self, args, env):
+        import subprocess
+        r = subprocess.run(["python"] + args, capture_output=True, cwd=str(_ROOT), env=env)
+        return r.returncode, r.stdout.decode("utf-8"), r.stderr.decode("utf-8")
+
+    def test_green_allows_export(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                run_dir, _ = _complete_run(tmp)
+                rc, o, e = self._run(["scripts/export_final.py", str(run_dir)], {**os.environ})
+                self.assertEqual(rc, 0, e)
+                self.assertTrue((run_dir / "proposal_final.docx").exists())
+
+    def test_red_blocks_export(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                run_dir, _ = _complete_run(tmp, break_number=True)
+                rc, o, e = self._run(["scripts/export_final.py", str(run_dir)], {**os.environ})
+                self.assertEqual(rc, 20)
+                self.assertFalse((run_dir / "proposal_final.docx").exists())
+
+    def test_yellow_requires_confirm(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                run_dir, _ = _complete_run(tmp, warn_long=True)
+                rc, o, e = self._run(["scripts/export_final.py", str(run_dir)], {**os.environ})
+                self.assertEqual(rc, 10)
+                self.assertFalse((run_dir / "proposal_final.docx").exists())
+                rc, o, e = self._run(["scripts/export_final.py", str(run_dir), "--confirm"],
+                                     {**os.environ})
+                self.assertEqual(rc, 0, e)
+                self.assertTrue((run_dir / "proposal_final.docx").exists())
+
+
+class TestFinalQAArtifacts(unittest.TestCase):
+
+    def test_qa_json_and_md_written(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                run_dir, run = _complete_run(tmp)
+                run(["scripts/final_qa.py", str(run_dir)])
+                self.assertTrue((run_dir / "final_qa.json").exists())
+                self.assertTrue((run_dir / "final_qa.md").exists())
+
+    def test_repair_plan_targets_sections(self):
+        import tempfile
+        with _HomeIsolation():
+            with tempfile.TemporaryDirectory() as tmp:
+                from engine.tor.final_qa import run_final_qa, build_repair_plan
+                run_dir, _ = _complete_run(tmp, break_number=True)
+                rep = run_final_qa(run_dir)
+                plan = build_repair_plan(rep)
+                self.assertEqual(plan["max_cycles_per_section"], 2)
+
+    def test_no_api_in_final_qa(self):
+        txt = (_ROOT / "engine" / "tor" / "final_qa.py").read_text(encoding="utf-8")
+        self.assertNotIn("import anthropic", txt)
+        self.assertNotIn("ANTHROPIC_API_KEY", txt)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
