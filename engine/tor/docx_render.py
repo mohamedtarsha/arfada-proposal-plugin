@@ -187,12 +187,9 @@ def _render_section(doc, candidate: dict, title: str, *, internal: bool) -> None
             if internal:
                 p = doc.add_paragraph(style=NOTE)
                 p.add_run(b.get("text", NEEDS_EVIDENCE_TAG).strip())
-            else:
-                # client version: show a neutral "to be provided" line, no internal tag
-                txt = b.get("text", "").replace(NEEDS_EVIDENCE_TAG, "").strip(": ").strip()
-                p = doc.add_paragraph(style=BODY)
-                run = p.add_run(f"[To be provided: {txt}]")
-                run.italic = True
+            # client version: OMIT entirely (v0.6.4 §8). An unresolved evidence gap is
+            # represented through the decision/blocker + DRAFT banner + QA, never as a
+            # leaked "[To be provided: ...]" line in the client document.
         elif btype == "bullet_list":
             for item in b.get("items", []):
                 doc.add_paragraph(str(item), style=BULLET)
@@ -288,14 +285,15 @@ def render_docx(
             # client version: silently omit blocked sections (do not expose internals),
             # but the DRAFT banner already warns of missing content.
 
-    # footer / version marker
+    # footer / version marker (actual runtime metadata — never hard-coded, §12)
     if internal:
+        from .version import plugin_version, knowledge_snapshot_version
         doc.add_paragraph()
         foot = doc.add_paragraph(style=NOTE)
         foot.add_run(
-            f"Internal review copy · plugin v{blueprint.get('plugin_version', '0.5.0')} · "
-            f"knowledge {blueprint.get('knowledge_version', 'unknown')} · "
-            f"run {blueprint.get('run_id', '')}")
+            f"Internal review copy · plugin v{plugin_version()} · "
+            f"knowledge {knowledge_snapshot_version(run_dir)} · "
+            f"run {blueprint.get('run_id', run_dir.name)}")
 
     variant = "internal_review" if internal else "client_draft"
     out_path = run_dir / f"proposal_{variant}.docx"

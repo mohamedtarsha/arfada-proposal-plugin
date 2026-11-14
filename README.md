@@ -3,15 +3,24 @@
 A Claude Code plugin for ARFADA staff. Brings structured TOR analysis and
 proposal drafting into Claude Code — distributed privately via GitHub.
 
-> **Status:** COMPLETE (v0.6.3) — TOR Analysis → Decision Review → Local Knowledge →
+> **Status:** COMPLETE (v0.6.4) — TOR Analysis → Decision Review → Local Knowledge →
 > Controlled Generation → Professional Word → Final Quality Review (GREEN/YELLOW/RED),
 > plus a local **Winning Proposal Library / ARFADA Writing DNA** (style only).
 > Core development done; the plugin is in team use. Future work = small bugfixes +
 > real-TOR tuning from actual usage.
 >
-> **v0.6.3 (UX patch):** Decision Review now uses Claude Code's native interactive
-> option cards (one decision at a time, "Recommended" never auto-selected, Arabic
-> labels with canonical values, short numbered fallback). No engine/semantics change.
+> **v0.6.4 (production hardening):** the reusable workflow from the first real run —
+> run initialization summary, classified submission checklist (mandatory/scoring/
+> optional), evidence-first team facts, relevant-experience ranking (current project
+> excluded, global count intact), previous-work annex validation, an interactive budget
+> that reconciles exactly, a client draft free of `[To be provided]`, hardened Final QA
+> (missing items by name, claimed-annex/budget/contamination/placeholder checks), a
+> sanitized gated final export, a physical submission-package check, and runtime
+> version metadata. No engine redesign; no new phase.
+>
+> **v0.6.3 (UX patch):** Decision Review uses Claude Code's native interactive option
+> cards (one decision at a time, "Recommended" never auto-selected, Arabic labels with
+> canonical values, short numbered fallback). No engine/semantics change.
 
 ### Winning Proposal Library (v0.6.1) — ARFADA Writing DNA, style only
 

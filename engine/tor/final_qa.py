@@ -100,9 +100,12 @@ def _numbers_near(text: str, keyword_re: str) -> list[int]:
 # Main entry
 # ---------------------------------------------------------------------------
 
-def run_final_qa(run_dir: str | Path, *, plugin_version: str = "0.6.0") -> dict:
+def run_final_qa(run_dir: str | Path, *, plugin_version: Optional[str] = None) -> dict:
     """Run all deterministic QA checks over a run directory. Returns the report dict."""
     run_dir = Path(run_dir)
+    if plugin_version is None:
+        from .version import plugin_version as _pv
+        plugin_version = _pv()
     findings: list[Finding] = []
 
     tor = _load(run_dir, "tor_analysis.json") or {}
@@ -152,6 +155,11 @@ def run_final_qa(run_dir: str | Path, *, plugin_version: str = "0.6.0") -> dict:
     findings += _check_duplication(ctx)
     findings += _check_client_leakage(ctx)
     findings += _check_historical_copy(ctx)
+    findings += _check_claimed_annexes(ctx)
+    findings += _check_budget_reconciliation(ctx)
+    findings += _check_current_project_contamination(ctx)
+    findings += _check_client_placeholders(ctx)
+    findings += _check_sampling(ctx)
 
     # dedup
     seen, uniq = set(), []
@@ -298,6 +306,11 @@ def _check_requirement_coverage(ctx) -> list[Finding]:
     for r in ctx["requirements"]:
         if r.get("actor") == "CLIENT":
             continue
+        # Submission/compliance items are owned by _check_submission, which grades
+        # them by obligation (mandatory vs scoring/competitive vs optional) so a
+        # competitive item never forces RED here.
+        if r.get("category") == "submission":
+            continue
         rid = r["req_id"]
         mandatory = r.get("mandatory", True)
         sec = owner.get(rid, "")
@@ -390,7 +403,12 @@ def _check_ownership(ctx) -> list[Finding]:
     for s in ctx["blueprint"].get("sections", []):
         for rid in s.get("requirement_ids", []):
             owner_count[rid] = owner_count.get(rid, 0) + 1
-    bidder = {r["req_id"] for r in ctx["requirements"] if r.get("actor") != "CLIENT"}
+    # submission/compliance items are package items (handled by _check_submission),
+    # not prose sections — they are not "orphans" when unowned.
+    submission_ids = {r["req_id"] for r in ctx["requirements"]
+                      if r.get("category") == "submission"}
+    bidder = {r["req_id"] for r in ctx["requirements"]
+              if r.get("actor") != "CLIENT" and r["req_id"] not in submission_ids}
     for rid in bidder:
         c = owner_count.get(rid, 0)
         if c == 0:
@@ -746,19 +764,43 @@ def _check_team(ctx) -> list[Finding]:
 # ---------------------------------------------------------------------------
 
 def _check_submission(ctx) -> list[Finding]:
+    """Report EACH missing submission item by its real identity + obligation.
+
+    Mandatory compliance failures are CRITICAL (RED). Scoring/competitive gaps are
+    WARNING (YELLOW at most — a competitive improvement never forces RED unless the
+    TOR makes it mandatory). Optional gaps are INFO.
+    """
+    from .submission import classify_submission_requirement, MANDATORY, SCORING
     out = []
     sub_reqs = [r for r in ctx["requirements"]
-                if r.get("category") == "submission" and r.get("actor") != "CLIENT"
-                and r.get("mandatory", True)]
+                if r.get("category") == "submission" and r.get("actor") != "CLIENT"]
     if not sub_reqs:
         return out
     addressed = _addressed_requirement_ids(ctx)
-    missing = [r for r in sub_reqs if r["req_id"] not in addressed]
-    if missing:
-        out.append(Finding("SUBMISSION", ERROR, "submission_gap",
-                           f"{len(missing)} mandatory submission requirement(s) not addressed",
-                           section_id="SUBMISSION", blocks_client=False,
-                           recommended_action="Address submission/compliance requirements."))
+    for r in sub_reqs:
+        if r["req_id"] in addressed:
+            continue
+        entry = classify_submission_requirement(r)
+        item = entry["item_label"]
+        obligation = entry["obligation"]
+        if obligation == MANDATORY:
+            out.append(Finding("SUBMISSION", CRITICAL, "mandatory_submission_missing",
+                               f"Mandatory submission item missing: {item}",
+                               evidence=entry["text"][:140], section_id="SUBMISSION",
+                               requirement_id=r["req_id"], blocks_client=True,
+                               recommended_action=f"Provide/address: {item}."))
+        elif obligation == SCORING:
+            out.append(Finding("SUBMISSION", WARNING, "scoring_submission_missing",
+                               f"Scoring/competitive item not yet addressed: {item}",
+                               evidence=entry["text"][:140], section_id="SUBMISSION",
+                               requirement_id=r["req_id"], blocks_client=False,
+                               recommended_action=f"Strengthen competitiveness: {item} "
+                                                  "(not mandatory — will not block export)."))
+        else:
+            out.append(Finding("SUBMISSION", INFO, "optional_submission_missing",
+                               f"Optional item not included: {item}",
+                               section_id="SUBMISSION", requirement_id=r["req_id"],
+                               blocks_client=False))
     return out
 
 
@@ -808,7 +850,9 @@ def _check_duplication(ctx) -> list[Finding]:
 # ---------------------------------------------------------------------------
 
 _INTERNAL_MARKERS = ("NEEDS_ARFADA_EVIDENCE", "BLOCKED_BY_DECISION", "req_", "slot_",
-                     "fact_id", "snap_", "qa_")
+                     "fact_id", "snap_", "qa_", "Master Tracker", "master_tracker",
+                     "knowledge snapshot", "knowledge_snapshot", "STATIC_FALLBACK",
+                     "LOCAL_FOLDER", "GOOGLE_API", "Knowledge folder", ".arfada-proposal")
 
 
 def _check_client_leakage(ctx) -> list[Finding]:
@@ -892,6 +936,209 @@ def _check_historical_copy(ctx) -> list[Finding]:
                                f"Historical project/client token(s) {leaks} leaked into the proposal",
                                section_id=sid,
                                recommended_action="Remove old client/project references."))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# CHECK: claimed annexes whose files do not exist (§9)
+# ---------------------------------------------------------------------------
+
+_ANNEX_CLAIM = {
+    "cvs": re.compile(r"\b(cv[s]?|curriculum vit\w+|r[eé]sum[eé]s?)\b[^.\n]{0,60}"
+                      r"\b(annex\w*|attach\w*|append\w*|enclos\w*|provided)\b", re.I),
+    "previous_work": re.compile(r"\b(example|sample)\b[^.\n]{0,40}\b(previous|past)\b"
+                                r"[^.\n]{0,40}\b(annex\w*|attach\w*|append\w*|enclos\w*)\b", re.I),
+    "budget": re.compile(r"\b(detailed budget|financial (?:offer|proposal)|budget)\b"
+                         r"[^.\n]{0,50}\b(annex\w*|attach\w*|append\w*|enclos\w*|separate)\b", re.I),
+}
+
+
+def _check_claimed_annexes(ctx) -> list[Finding]:
+    """If the proposal text claims an annex (CVs/previous work/budget) is attached,
+    the physical file must exist in the run package — a textual claim is not proof."""
+    out = []
+    text = _all_generated_text(ctx)
+    if not text.strip():
+        return out
+    try:
+        from .package import check_submission_package
+    except Exception:
+        return out
+    pkg = check_submission_package(ctx["run_dir"],
+                                   item_keys=["cv_annex", "previous_work", "detailed_budget"],
+                                   require_proposal=False)
+    present = {it["label"]: it["present"] for it in pkg["items"]}
+    key_to_label = {
+        "cvs": "Required CVs",
+        "previous_work": "Previous-work example",
+        "budget": "Financial offer / detailed budget",
+    }
+    for key, pat in _ANNEX_CLAIM.items():
+        if pat.search(text):
+            label = key_to_label[key]
+            if not present.get(label, False):
+                out.append(Finding("CLAIMED_ANNEX", CRITICAL, "annex_claim_without_file",
+                                   f"Proposal claims '{label}' is annexed/attached, but no such "
+                                   "file exists in the submission package",
+                                   requirement_id="", section_id="",
+                                   recommended_action=f"Add the actual {label} file to the "
+                                                      "package, or remove the claim."))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# CHECK: budget reconciliation (§7/§9)
+# ---------------------------------------------------------------------------
+
+def _check_budget_reconciliation(ctx) -> list[Finding]:
+    """If a structured budget exists, it must reconcile to the approved total."""
+    out = []
+    budget = _load(ctx["run_dir"], "budget.json")
+    if not budget:
+        return out
+    if budget.get("missing_inputs"):
+        out.append(Finding("BUDGET", CRITICAL, "budget_missing_inputs",
+                           "Budget has missing line inputs: "
+                           f"{', '.join(str(m) for m in budget['missing_inputs'])}",
+                           section_id="BUDGET",
+                           recommended_action="Collect the missing values (never invent)."))
+    elif not budget.get("reconciles", False):
+        out.append(Finding("BUDGET", CRITICAL, "budget_reconciliation",
+                           budget.get("reconciliation_message",
+                                      "Detailed budget does not reconcile to the approved total."),
+                           section_id="BUDGET",
+                           recommended_action="Adjust a line so the detailed budget equals "
+                                              "the approved total."))
+    loe = budget.get("loe_check")
+    if loe and not loe.get("matches", True):
+        out.append(Finding("BUDGET", WARNING, "loe_mismatch",
+                           f"Budgeted person-days ({loe['budgeted_person_days']}) differ from "
+                           f"approved LOE ({loe['approved_loe']}).",
+                           section_id="BUDGET"))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# CHECK: current-project contamination in past experience (§5/§9)
+# ---------------------------------------------------------------------------
+
+_PAST_EXPERIENCE_SECTIONS = ("EXPERIENCE", "PAST_PERFORMANCE", "RELEVANT_EXPERIENCE",
+                             "COMPANY_PROFILE", "TRACK_RECORD", "ORGANISATION",
+                             "ORGANIZATIONAL_CAPACITY")
+
+
+def _check_current_project_contamination(ctx) -> list[Finding]:
+    """The current TOR/assignment must not be presented as past ARFADA experience."""
+    out = []
+    meta = (ctx["tor"] or {}).get("metadata", {})
+
+    def mv(k):
+        e = meta.get(k)
+        return (e.get("value", "") if isinstance(e, dict) else "").strip()
+
+    current_title = mv("assignment") or mv("title")
+    if not current_title or len(current_title) < 8:
+        return out
+    cur_tokens = {t for t in re.findall(r"[a-z0-9]{4,}", current_title.lower())}
+    cur_tokens -= {"evaluation", "endline", "baseline", "midline", "final", "study",
+                   "assessment", "project", "programme", "program", "survey", "review"}
+    if len(cur_tokens) < 2:
+        return out
+    for sid, cand in ctx["gen_sections"].items():
+        if not any(k in sid.upper() for k in _PAST_EXPERIENCE_SECTIONS):
+            continue
+        text = _section_text(cand).lower()
+        hit = cur_tokens & {t for t in re.findall(r"[a-z0-9]{4,}", text)}
+        if len(hit) >= max(2, len(cur_tokens) // 2):
+            out.append(Finding("EXPERIENCE_CONTAMINATION", ERROR, "current_project_in_past",
+                               f"Past-experience section '{sid}' appears to reference the CURRENT "
+                               f"assignment (shared terms: {sorted(hit)})",
+                               section_id=sid,
+                               recommended_action="Remove the current assignment from past "
+                                                  "experience; cite only completed work."))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# CHECK: client placeholders leaked into the client draft (§8/§9/§10)
+# ---------------------------------------------------------------------------
+
+_PLACEHOLDER_RE = re.compile(r"\[to be provided[:\]]|\[tbd\]|\[placeholder\]|\bTBD\b", re.I)
+
+
+def _check_client_placeholders(ctx) -> list[Finding]:
+    """The client draft must never contain '[To be provided: ...]' or similar."""
+    out = []
+    client_docx = ctx["run_dir"] / "proposal_client_draft.docx"
+    if not client_docx.exists():
+        return out
+    try:
+        import sys
+        deps = Path(__file__).resolve().parent.parent.parent / ".mcp_deps"
+        if deps.exists() and str(deps) not in sys.path:
+            sys.path.insert(0, str(deps))
+        from docx import Document
+        doc = Document(str(client_docx))
+        text = "\n".join(p.text for p in doc.paragraphs)
+        for t in doc.tables:
+            for row in t.rows:
+                for c in row.cells:
+                    text += "\n" + c.text
+    except Exception:
+        return out
+    if _PLACEHOLDER_RE.search(text):
+        out.append(Finding("CLIENT_PLACEHOLDER", CRITICAL, "client_placeholder",
+                           "Client draft contains an internal placeholder "
+                           "('[To be provided: ...]' / TBD) — represent the gap through the "
+                           "decision/blocker system, never leak it to the client.",
+                           recommended_action="Resolve the evidence gap or omit the line; "
+                                              "re-render the client draft."))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# CHECK: sampling-unit mismatch + sample arithmetic (§9)
+# ---------------------------------------------------------------------------
+
+_SAMPLE_UNITS = ("households", "household", "individuals", "respondents", "people",
+                 "children", "learners", "students", "women", "beneficiaries",
+                 "caregivers", "facilities", "schools", "communities")
+
+
+def _check_sampling(ctx) -> list[Finding]:
+    """Flag a stated sample total that disagrees with the sum of its subgroups, and
+    a sampling unit that is inconsistent within the same section."""
+    out = []
+    for sid, cand in ctx["gen_sections"].items():
+        text = _section_text(cand)
+        low = text.lower()
+        # arithmetic: "total sample of N ( ... a ... b ... c )" where a+b+c != N
+        for m in re.finditer(r"(?:total\s+)?sample(?:\s+size)?\s+of\s+(\d{2,6})", low):
+            total = int(m.group(1))
+            tail = low[m.end(): m.end() + 200]
+            parts = [int(x) for x in re.findall(r"\b(\d{2,5})\b", tail)]
+            # look for an additive breakdown that sums close to a plausible decomposition
+            if len(parts) >= 2:
+                s = sum(parts[:6])
+                if s != total and total not in parts and abs(s - total) <= max(5, total):
+                    # only flag when the parts look like a decomposition (2-6 addends)
+                    if 2 <= len([p for p in parts if p < total]) <= 6 and s != total:
+                        out.append(Finding("SAMPLING", ERROR, "sample_arithmetic",
+                                           f"Sample total {total} in '{sid}' does not equal the "
+                                           f"sum of its stated subgroups ({' + '.join(map(str, parts[:6]))} = {s})",
+                                           section_id=sid,
+                                           recommended_action="Reconcile the sample breakdown "
+                                                              "with the stated total."))
+                        break
+        # unit mismatch: a single sample figure described with two different units nearby
+        units_present = [u for u in _SAMPLE_UNITS if re.search(rf"\b{u}\b", low)]
+        if "household" in " ".join(units_present) and \
+                any(u in ("individuals", "respondents", "people") for u in units_present):
+            if re.search(r"sample\s+of\s+\d", low):
+                out.append(Finding("SAMPLING", WARNING, "sampling_unit_mismatch",
+                                   f"'{sid}' mixes sampling units (households vs individuals) "
+                                   "around the sample size — state one consistent unit.",
+                                   section_id=sid, blocks_client=False))
     return out
 
 

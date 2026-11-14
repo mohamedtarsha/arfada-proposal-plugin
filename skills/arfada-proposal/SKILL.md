@@ -10,9 +10,10 @@ trigger: /arfada-proposal
 
 # ARFADA Proposal Assistant
 
-**Plugin version:** 0.6.3
+**Plugin version:** 0.6.4
 **Publisher:** ARFADA
-**Status:** Complete + Writing DNA — TOR → decisions → knowledge → generation → DOCX → Final QA
+**Status:** Complete + Writing DNA + Production Workflow — init → TOR → decisions →
+knowledge → generation → budget → DOCX → Final QA → package → export
 
 ---
 
@@ -21,8 +22,9 @@ trigger: /arfada-proposal
 When invoked without context, print:
 
 ```
-ARFADA Proposal Assistant v0.6.0
+ARFADA Proposal Assistant v0.6.4
 
+  0. Run Initialization        — verify knowledge, DNA, historical pairs, versions
   1. Analyze TOR               — provide a .pdf or .docx file
   2. Review Proposal Decisions — review and record proposal choices
   3. Refresh ARFADA Knowledge  — scan the local ARFADA Knowledge folder
@@ -35,6 +37,58 @@ Also: "Set ARFADA Knowledge Folder", "ARFADA Knowledge Status"
 
 If a run directory is already in context (from previous analysis), offer the
 relevant next step with `[run: <run_id>]`.
+
+---
+
+## Default proposal workflow (v0.6.4 — productionized)
+
+Follow this order by default so each TOR needs far less manual intervention. Every
+step is deterministic Python; the active session handles conversation and content.
+
+0. **Run initialization** — `run_init.py` (verify sources, DNA, pairs, versions).
+1. **Analyze TOR** — `analyze_tor.py` (requirements, metadata, decisions, type).
+2. **Submission checklist** — `submission_checklist.py` (MANDATORY / SCORING / OPTIONAL
+   with real item identities).
+3. **Review proposal decisions** — native option cards, one at a time (§ "2. Review…").
+4. **Relevant experience** — `relevant_experience.py` ranks past assignments
+   (current project excluded); user selects the final 3–5 via cards.
+5. **Interactive budget** — `budget_builder.py` collects rates/LOE, reconciles to the
+   approved total before approval.
+6. **Generate draft** — evidence-first; promote any CV-read fact to a structured
+   staff fact before use.
+7. **Export internal / client** — client draft never carries internal markers or
+   `[To be provided: ...]`.
+8. **Final Quality Review** — `final_qa.py` (GREEN/YELLOW/RED).
+9. **Submission package check** — `submission_package.py` (physical files exist).
+10. **Final export** — `export_final.py` (gated + sanitized).
+
+---
+
+## 0. Run Initialization
+
+At the start of EVERY new TOR run, verify and report the environment — do NOT
+re-index or regenerate anything (Writing DNA + exemplars persist across sessions and
+are auto-discovered):
+
+```bash
+python "<plugin_root>/scripts/run_init.py" --compact
+```
+
+Show the compact summary, e.g.:
+
+```
+Knowledge: ACTIVE
+Master Tracker: ACTIVE
+Staff CVs: ACTIVE
+Writing DNA: ACTIVE
+Historical pairs: 14
+Previous Work library: ACTIVE
+Plugin: v0.6.4 · Knowledge snapshot: 2026.11.1
+```
+
+If a source is INACTIVE, offer the one-line fix (set the Knowledge folder; set the
+Winning Proposal Library) — but never block analysis on it. Use `run_init.py` (no
+`--compact`) for the full JSON when the user asks for detail.
 
 ---
 
@@ -223,6 +277,21 @@ they build packets, validate your output, and persist artifacts. You must:
 4. Read `<OUTPUT_DIR>/analysis_summary.md`
 5. Present analysis summary
 6. If PROPOSAL_DECISIONS > 0, offer: "Would you like to review the X proposal decisions now?"
+
+### 1a. Submission checklist (classified)
+
+Immediately after analysis, build the submission checklist so every required item is
+tracked by its real identity and obligation:
+
+```bash
+python "<plugin_root>/scripts/submission_checklist.py" "<run_dir>"
+```
+
+Present three groups — **MANDATORY**, **SCORING / COMPETITIVE**, **OPTIONAL** — using
+the real item labels (e.g. "Detailed budget", "Example of previous work", "CV annex").
+QA uses the SAME classifier, so a missing mandatory item is later reported by name
+(never a generic "[SUBMISSION] requirement missing"). A competitive/scoring gap is a
+recommendation, not a blocker.
 
 ---
 
@@ -451,6 +520,84 @@ Example Arabic card (rendered natively, one at a time):
 
 ---
 
+## 2a. Relevant experience selection
+
+Rank ARFADA's past assignments for THIS TOR and let the user pick the final 3–5:
+
+```bash
+python "<plugin_root>/scripts/relevant_experience.py" "<run_dir>"
+```
+
+- Ranking uses country, assignment/evaluation type, sector(s), client/donor, and
+  thematic similarity. The **current TOR/project is excluded** from retrieval so the
+  proposal never cites itself.
+- Present the `selection_card` options; the user selects 3–5 (never auto-select).
+- `global_total_projects` in the output is ARFADA's **verified full-tracker** count —
+  the run-scoped exclusion does NOT reduce it. Use `global_total_projects` for any
+  "ARFADA has delivered N projects" statement, and the selected assignments for the
+  featured examples.
+
+---
+
+## 2b. Evidence-first team facts
+
+No named-person claim may enter the proposal without structured staff evidence.
+
+- Prefer `query_knowledge.py search --type staff …` (normalized CV profiles with
+  provenance). Numeric experience is parsed defensively — ages, project durations,
+  date ranges, and beneficiary counts can never become "years of experience".
+- If you read a CV directly and accept a fact, **promote it first** to a structured
+  staff fact with provenance (`engine.tor.gknowledge.normalize.promote_staff_fact`)
+  before using it. If evidence is unavailable, **omit or soften** the claim — never
+  invent. Final QA flags unsupported named-person claims.
+
+---
+
+## 2c. Interactive budget builder
+
+Use the **approved total budget** and **approved LOE**. Ask the user for each line
+input (never invent a value):
+
+- expert daily rates · field supervisor · enumerators · transport ·
+  participant reimbursement · translation/transcription · editing/printing ·
+  taxes/mandatory costs · other TOR-specific costs.
+
+Preview the computed budget and show the reconciliation BEFORE approval:
+
+```bash
+# preview (shows reconciliation vs approved total)
+echo '<budget_spec.json>' | python "<plugin_root>/scripts/budget_builder.py" "<run_dir>" --spec -
+# approve (saves budget.json; refuses unless it reconciles exactly)
+python "<plugin_root>/scripts/budget_builder.py" "<run_dir>" --spec spec.json --approve
+```
+
+Each line is computed automatically (quantity×rate, or a % of subtotal for taxes).
+The detailed budget must reconcile EXACTLY to the approved total; Final QA blocks on a
+reconciliation error or a missing input. Use the approved breakdown consistently in
+the proposal's financial narrative.
+
+---
+
+## 2d. Previous-work annex
+
+When the TOR requests an example of previous work:
+
+```bash
+python "<plugin_root>/scripts/previous_work.py" validate "<file>"
+python "<plugin_root>/scripts/previous_work.py" register "<run_dir>" "<file>" [--confirm-clearance]
+```
+
+- The file must validate as an actual deliverable (evaluation / endline / final
+  evaluation / assessment report) produced by/for ARFADA — **not** a proposal, TOR,
+  policy, or branding/manual document.
+- If ARFADA authorship/sharing clearance is not evident in the file, `register`
+  requires `--confirm-clearance` (the user confirming ARFADA may share it).
+- Registration copies the file into `annexes/previous_work/` and writes
+  `previous_work.json`. **Never state that an example is annexed until the actual file
+  exists in the run package.**
+
+---
+
 ## 3. Generate Proposal Draft
 
 ### Step 1 — Build the blueprint
@@ -606,9 +753,12 @@ version/knowledge footer. For the ARFADA team.
 ```bash
 python "<plugin_root>/scripts/render_docx.py" "<run_dir>" --client
 ```
-Hides all internal IDs, fact_ids, and system notes. If unresolved evidence gaps
-remain, it is marked "DRAFT — HUMAN REVIEW REQUIRED". If a section has a hard
-unsupported-fact error, **client export fails** (exit 5) — fix the section first.
+Hides all internal IDs, fact_ids, and system notes. **The client draft never contains
+`[To be provided: ...]`** — an unresolved evidence gap is represented through the
+decision/blocker system and the "DRAFT — HUMAN REVIEW REQUIRED" banner, not leaked
+into the document (v0.6.4 §8). If a section has a hard unsupported-fact error,
+**client export fails** (exit 5) — fix the section first. The internal footer uses the
+**actual** plugin version and knowledge-snapshot version (never hard-coded).
 
 Optional logo: add `--logo "<path to ARFADA logo.png>"` for the cover page.
 
@@ -675,13 +825,25 @@ numeric contradictions across sections, assignment-type terminology, section
 completeness, framework matrix, deliverables, workplan, team, submission, readability,
 duplication, and **client-DOCX leakage** (internal IDs / local paths → CRITICAL).
 
+**v0.6.4 additions:** missing mandatory submission items **by name** (e.g. "Detailed
+budget missing") separated from scoring/competitive recommendations; claimed annexes
+whose files do not exist (CV annex / previous-work / budget); budget reconciliation
+errors + LOE mismatch; current-project contamination in past experience; client
+placeholders (`[To be provided: ...]` / TBD); sampling-unit mismatch + sample
+arithmetic; and expanded internal leakage (Master Tracker / knowledge-snapshot /
+knowledge-folder references).
+
 ### Verdict rules
-- **RED** — a mandatory requirement missing, a fixed-TOR contradiction, a fabricated
-  decision, an unsupported critical fact, wrong client/country, a missing mandatory
-  deliverable/framework, a hard generation failure, or client-DOCX internal leakage.
-- **YELLOW** — no critical failures but material errors/warnings or human-review items.
+- **RED** — a mandatory requirement or **mandatory submission item** missing, a
+  fixed-TOR contradiction, a fabricated decision, an unsupported critical fact, wrong
+  client/country, a missing mandatory deliverable/framework, a **budget that does not
+  reconcile**, a **claimed annex with no file**, a **client placeholder/internal
+  leak**, a hard generation failure, or client-DOCX internal leakage.
+- **YELLOW** — no critical failures but material errors/warnings or human-review items,
+  including **scoring/competitive** gaps (a competitive improvement never forces RED
+  unless the TOR makes it mandatory).
 - **GREEN** — mandatory coverage adequate, no critical failures, facts/decisions/
-  constraints valid.
+  constraints/budget valid.
 
 ### Drill-down
 On request: `show critical issues`, `show warnings`, `show missing requirements`,
@@ -697,14 +859,27 @@ each), re-validate them, then re-run Final QA. **NEVER** change an approved huma
 decision (sample count, staff, methodology choice, deferral, assignment type) to make
 QA pass — human decisions are authoritative.
 
-### Export Final (gated)
+### Submission package check (before/after GREEN)
+Verify the ACTUAL files exist — a textual "CVs annexed" is not proof:
+```bash
+python "<plugin_root>/scripts/submission_package.py" "<run_dir>"
+```
+Shows `proposal_final.docx`, required CVs, previous-work example, financial offer /
+detailed budget, and any other TOR-required annex, with the real filenames present and
+a list of what is still missing. Expectations come from the submission checklist.
+
+### Export Final (gated + sanitized)
 ```bash
 python "<plugin_root>/scripts/export_final.py" "<run_dir>"            # GREEN only
 python "<plugin_root>/scripts/export_final.py" "<run_dir>" --confirm  # YELLOW w/ confirmation
 ```
-- **GREEN** → produces `proposal_final.docx` (validated client content, no new content).
-- **YELLOW** → requires explicit user confirmation ("Export final despite QA warnings?").
+- **GREEN** → produces `proposal_final.docx` and **removes the DRAFT / HUMAN-REVIEW
+  stamp** (validated client content, no new content).
+- **Confirmed YELLOW** → produces the final but **retains the DRAFT stamp**.
 - **RED** → blocked (exit 20); no client deliverable. The internal review DOCX stays available.
+- **All exports are sanitized**: `[To be provided: ...]` is stripped and the final is
+  rejected if any internal marker or Knowledge/Master-Tracker/internal-review leakage
+  remains — on failure it exits `FINAL_SANITIZE_FAILED` (30) and **deletes the final**.
 `export_final.py` re-runs QA first, so a stale GREEN never slips through.
 
 ### Invalidation

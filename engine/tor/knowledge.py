@@ -14,10 +14,46 @@ No network, no DB, no production dependency. Snapshot is versioned in Git.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Optional
 
 _KNOWLEDGE_DIR = Path(__file__).resolve().parent.parent.parent / "knowledge"
+
+_STOP = {"the", "and", "for", "of", "in", "a", "an", "to", "on", "with", "project",
+         "study", "evaluation", "assessment", "final", "report"}
+
+
+def _tokens(text: str) -> set:
+    """Lowercase alphanumeric tokens >2 chars, minus common stopwords."""
+    return {t for t in re.findall(r"[a-z0-9]{3,}", (text or "").lower())
+            if t not in _STOP}
+
+
+def _matches_current(project: dict, current: dict) -> bool:
+    """True if a project is the SAME as the current TOR/assignment (run-scoped drop).
+
+    Conservative: requires a project-name match, OR a (country + assignment_type)
+    match combined with meaningful name-token overlap. Never drops on country alone,
+    so unrelated past work in the same country is still cited.
+    """
+    pname = (project.get("project_name") or "").strip().lower()
+    cname = (current.get("project_name") or current.get("assignment") or "").strip().lower()
+    if cname and pname and (cname == pname or cname in pname or pname in cname):
+        return True
+    cc = (current.get("country") or "").lower()
+    ct = (current.get("assignment_type") or "").upper()
+    if cc and ct and (project.get("country") or "").lower() == cc \
+            and (project.get("assignment_type") or "").upper() == ct:
+        # Require DISTINCTIVE name overlap — strip generic type/country words so two
+        # unrelated "endline … Jordan" assignments are not treated as the same.
+        generic = {"endline", "baseline", "midline", "survey", "review", "programme",
+                   "program", "response", "phase"} | {t for t in _tokens(cc)}
+        a = _tokens(cname) - generic
+        b = _tokens(pname) - generic
+        if a and b and (a & b):
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -170,32 +206,72 @@ class Knowledge:
         country: Optional[str] = None,
         region: Optional[str] = None,
         sector: Optional[str] = None,
+        sectors: Optional[list] = None,
+        client: Optional[str] = None,
+        donor: Optional[str] = None,
+        evaluation_type: Optional[str] = None,
+        thematic: Optional[str] = None,
+        exclude_project_ids: Optional[set] = None,
+        exclude_current: Optional[dict] = None,
         limit: int = 5,
     ) -> list[dict]:
-        """Evidence-based project selection — scored by metadata match only.
+        """Evidence-based past-experience ranking — scored by metadata match only.
+
+        Ranks on country, assignment/evaluation type, sector(s), client/donor, and
+        thematic token similarity. The CURRENT TOR/project is excluded run-scoped
+        (exclude_project_ids / exclude_current) so a proposal never cites itself —
+        this exclusion is retrieval-only and does NOT change global portfolio
+        metrics (those come from compute_metrics over the full tracker).
 
         Uses the active source (snapshot > live > static). Returns structured
-        records (no prose). Empty list if nothing matches well.
+        records (no prose), each with a scored_on breakdown. Empty if no match.
         """
-        scored: list[tuple[int, dict]] = []
+        want_sectors = [s.lower() for s in (sectors or []) if s]
+        if sector:
+            want_sectors.append(sector.lower())
+        thematic_tokens = _tokens(thematic) if thematic else set()
+        exclude_ids = {str(x) for x in (exclude_project_ids or set())}
+
+        scored: list[tuple[int, dict, dict]] = []
         for p in self._project_pool():
+            if str(p.get("project_id") or p.get("fact_id") or "") in exclude_ids:
+                continue
+            if exclude_current and _matches_current(p, exclude_current):
+                continue
             score = 0
+            why = {}
             if assignment_type and p.get("assignment_type") == assignment_type:
-                score += 4
+                score += 4; why["assignment_type"] = 4
+            if evaluation_type and evaluation_type.lower() in (
+                    (p.get("assignment_type") or "") + " " + (p.get("sector") or "")).lower():
+                score += 2; why["evaluation_type"] = 2
             if country and (p.get("country") or "").lower() == (country or "").lower():
-                score += 3
+                score += 3; why["country"] = 3
             if region and (p.get("region") or "").lower() == (region or "").lower():
-                score += 2
-            if sector and sector.lower() in (p.get("sector") or "").lower():
-                score += 2
+                score += 2; why["region"] = 2
+            psec = (p.get("sector") or "").lower()
+            if want_sectors and any(s in psec or psec in s for s in want_sectors if s):
+                score += 2; why["sector"] = 2
+            if client and client.lower() in (
+                    (p.get("client") or "") + " " + (p.get("donor") or "")).lower():
+                score += 3; why["client"] = 3
+            if donor and donor.lower() in (
+                    (p.get("donor") or "") + " " + (p.get("client") or "")).lower():
+                score += 2; why["donor"] = 2
+            if thematic_tokens:
+                hay = _tokens(" ".join(str(p.get(k) or "") for k in
+                                       ("project_name", "sector", "description")))
+                overlap = len(thematic_tokens & hay)
+                if overlap:
+                    score += min(overlap, 3); why["thematic"] = min(overlap, 3)
             if score > 0:
-                scored.append((score, p))
+                scored.append((score, p, why))
         scored.sort(key=lambda x: -x[0])
         out = []
-        for score, p in scored[:limit]:
+        for score, p, why in scored[:limit]:
             fid = p.get("fact_id") or p.get("project_id") or "proj"
             out.append({**p, "fact_id": fid, "match_score": score,
-                        **self._source_tag()})
+                        "scored_on": why, **self._source_tag()})
         return out
 
     # --- staff matching (spec §13) ----------------------------------------

@@ -160,6 +160,48 @@ _ROLE = re.compile(
     r"enumerator|data\s+analyst|statistician|field\s+coordinator|consultant|"
     r"sector\s+specialist|qualitative\s+specialist|quantitative\s+specialist)\b", re.I)
 
+# A "N years" match is NOT years-of-experience when the surrounding window is about
+# someone's age, a project/grant duration, beneficiaries, a date range, or schooling.
+# Only accept a match when the window has an experience cue AND no disqualifier.
+_EXP_CUE = re.compile(
+    r"\b(experience|professional|career|working|worked|practitioner|expertise|"
+    r"consult|evaluation|research|m&e|monitoring|field\s*work|sector)\b", re.I)
+_EXP_DISQUALIFY = re.compile(
+    r"\b(age[d]?|years?\s*old|year-?old|born|children|child|adolescent|youth|"
+    r"beneficiar|participant|respondent|household|students?|pupils?|grade|"
+    r"duration|project|programme|program|grant|contract|phase|period|"
+    r"warrant[y]?|valid|gpa|graduat|degree|enrol)\b", re.I)
+_DATE_RANGE = re.compile(r"\b(19|20)\d{2}\s*[-–—/]\s*((19|20)\d{2}|present|now|date)\b", re.I)
+
+
+def _experience_years(text: str) -> tuple[Optional[int], str]:
+    """Extract years of professional experience, rejecting unrelated numbers.
+
+    Returns (max_qualified_years_or_None, evidence_snippet). A number such as an
+    age range, project duration, or beneficiary count can never become years of
+    experience — we only accept a "N years" match whose context has an experience
+    cue and no disqualifying cue. If nothing qualifies, returns (None, "").
+    """
+    low = text or ""
+    best: Optional[int] = None
+    best_snip = ""
+    for m in _YEARS.finditer(low):
+        val = int(m.group(1))
+        if val <= 0 or val > 60:  # implausible as professional experience
+            continue
+        # Disqualifiers must be CLOSE to this number (age/duration/beneficiary bind
+        # tightly, e.g. "6 years old"); the experience cue may be a little further.
+        near = low[max(0, m.start() - 22): m.end() + 22]
+        wide = low[max(0, m.start() - 45): m.end() + 45]
+        if _EXP_DISQUALIFY.search(near) or _DATE_RANGE.search(near):
+            continue
+        if not _EXP_CUE.search(wide):
+            continue
+        if best is None or val > best:
+            best = val
+            best_snip = wide.strip()
+    return best, best_snip
+
 
 def normalize_cv(*, text: str, file_id: str, file_name: str, country: str = "",
                  modified_time: str = "") -> dict:
@@ -169,8 +211,7 @@ def normalize_cv(*, text: str, file_id: str, file_name: str, country: str = "",
     """
     low = (text or "")
     name = _guess_name(file_name)
-    years = [int(m.group(1)) for m in _YEARS.finditer(low)]
-    max_years = max(years) if years else None
+    max_years, years_snip = _experience_years(low)
     langs = sorted({m.group(1).title() for m in _LANG.finditer(low)})
     degrees = sorted({m.group(0).upper() for m in _DEGREE.finditer(low)})
     roles = sorted({m.group(0).title() for m in _ROLE.finditer(low)})
@@ -191,10 +232,36 @@ def normalize_cv(*, text: str, file_id: str, file_name: str, country: str = "",
         "source_file_name": file_name,
         "source_modified_time": modified_time,
         "evidence": {
-            "years_experience": _evidence(_YEARS) if max_years else "",
+            "years_experience": years_snip,
             "education": _evidence(_DEGREE) if degrees else "",
         },
         "extraction_confidence": "MEDIUM" if (max_years or degrees or roles) else "LOW",
+    }
+
+
+def promote_staff_fact(*, name: str, attribute: str, value: Any, source_file: str,
+                       quote: str = "", confidence: str = "MEDIUM") -> dict:
+    """Promote a fact read directly from a CV into a structured staff fact (§4).
+
+    When the session reads a CV and accepts a claim (role, years, education,
+    language, availability), it must be promoted to a provenance-bearing staff
+    fact BEFORE the proposal may use it — no named-person claim without evidence.
+    """
+    staff_id = "cv_" + hashlib.sha1((source_file or name).encode()).hexdigest()[:12]
+    return {
+        "fact_id": "stafffact_" + hashlib.sha1(
+            f"{staff_id}|{attribute}|{value}".encode()).hexdigest()[:12],
+        "staff_id": staff_id,
+        "name": (name or "").strip(),
+        "attribute": attribute,
+        "value": value,
+        "verified": True,
+        "confidence": confidence,
+        "provenance": {
+            "method": "cv_read_promoted",
+            "source_file": source_file,
+            "quote": (quote or "")[:240],
+        },
     }
 
 

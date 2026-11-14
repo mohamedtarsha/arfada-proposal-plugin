@@ -2283,7 +2283,9 @@ class TestKnowledgeVersionPersisted(unittest.TestCase):
             result = analyze(EN_DOCX, tmp)
             run_dir = Path(result["output_dir"])
             tor = _json.loads((run_dir / "tor_analysis.json").read_text(encoding="utf-8"))
-            self.assertEqual(tor["plugin_version"], "0.5.0")
+            # v0.6.4 §12: version is sourced from plugin.json, never hard-coded.
+            from engine.tor.version import plugin_version
+            self.assertEqual(tor["plugin_version"], plugin_version())
 
 
 class TestNoProviderAPIPhase4(unittest.TestCase):

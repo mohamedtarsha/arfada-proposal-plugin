@@ -83,7 +83,8 @@ def main(argv=None) -> int:
     blueprint = _read_json(run_dir / "proposal_blueprint.json")
     status_doc = _read_json(run_dir / "generation_status.json")
     tor = _read_json(run_dir / "tor_analysis.json")
-    blueprint["plugin_version"] = "0.5.0"
+    from engine.tor.version import plugin_version
+    blueprint["plugin_version"] = plugin_version()
 
     try:
         result = render_docx(run_dir=run_dir, blueprint=blueprint, status_doc=status_doc,

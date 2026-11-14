@@ -105,8 +105,9 @@ def main(argv=None) -> int:
     try:
         from engine.tor.gknowledge import snapshot as _snap
         from engine.tor.gknowledge import auth as _auth
+        from engine.tor.version import plugin_version as _pv
         offline = not _auth.is_connected()
-        manifest = _snap.create_snapshot(run_dir, plugin_version="0.5.1", offline=offline)
+        manifest = _snap.create_snapshot(run_dir, plugin_version=_pv(), offline=offline)
         snapshot_info = {
             "snapshot_id": manifest.get("snapshot_id"),
             "source_mode": manifest.get("source_mode"),

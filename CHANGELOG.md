@@ -6,6 +6,66 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.6.4] — 2026-11-14
+
+### Production hardening — reusable workflow from the first real end-to-end run
+
+No new development phase and no engine redesign: this pass productionizes the lessons
+from the first completed ARFADA proposal so the next TOR needs far less manual work.
+
+- **§1 Run initialization** — `run_init.py` reports, in one compact summary, the
+  Knowledge source, Master Tracker, Staff CVs, Company docs, Previous Work library,
+  Writing DNA, historical TOR↔Proposal pairs, plugin version, and knowledge-snapshot
+  version. Writing DNA + exemplars persist across sessions and are auto-discovered; no
+  re-index.
+- **§2 Submission checklist** — `submission.py` + `submission_checklist.py` classify
+  each submission requirement as MANDATORY / SCORING / OPTIONAL with a stable item
+  identity. QA now reports a missing item by name ("Detailed budget missing"), never a
+  generic "[SUBMISSION]".
+- **§4 Evidence-first team facts** — hardened CV years-of-experience parsing (ages,
+  project durations, date ranges, beneficiary counts can no longer become "years of
+  experience"); new `promote_staff_fact()` turns a CV-read fact into a provenance-
+  bearing staff fact before use.
+- **§5 Relevant experience** — `relevant_projects()` now scores on country, type,
+  sector(s), client/donor, evaluation type, and thematic similarity, and excludes the
+  current TOR/project (run-scoped). The exclusion does NOT change the global portfolio
+  count (verified full-tracker metric). `relevant_experience.py` emits selection cards.
+- **§6 Previous-work annex** — `annex.py` + `previous_work.py` validate that a file is
+  an actual evaluation/assessment deliverable by/for ARFADA (not a proposal/TOR/policy/
+  branding), require clearance confirmation when authorship isn't evident, and register
+  it into the run package. Nothing is "annexed" until the file exists.
+- **§7 Interactive budget** — `budget.py` + `budget_builder.py` build a detailed budget
+  from approved total + LOE and user-supplied line inputs (never invented), reconcile
+  EXACTLY to the approved total, and show the reconciliation before approval.
+- **§8 Client/internal separation** — the client draft no longer emits
+  `[To be provided: ...]`; unresolved evidence is represented through the decision/
+  blocker system + DRAFT banner.
+- **§9 QA hardening** — new Final-QA checks: missing mandatory submission items by
+  name, claimed annexes without files, budget reconciliation + LOE, current-project
+  contamination in past experience, client placeholders, sampling-unit mismatch +
+  sample arithmetic, expanded internal leakage. Mandatory compliance failures (RED) are
+  separated from competitive recommendations (YELLOW at most).
+- **§10 Final export** — `export_final.py` sanitizes the final: GREEN drops the DRAFT
+  stamp, confirmed YELLOW retains it, RED blocks; strips `[To be provided: ...]`; and
+  fails `FINAL_SANITIZE_FAILED` (deleting the final) if any internal/knowledge-tracker
+  leakage remains.
+- **§11 Submission package check** — `package.py` + `submission_package.py` verify the
+  physical files (proposal_final.docx, CVs, previous-work example, budget, other
+  annexes) exist — a textual "CVs annexed" is not accepted as proof.
+- **§12 Runtime metadata** — `version.py` is the single source of truth; plugin and
+  knowledge-snapshot versions are read at runtime (no hard-coded "0.5.0"/"0.6.0").
+
+### §13 Regression
+`tests/test_jordan_regression.py` models the completed Jordan child-labour run as a
+regression fixture for the generalized workflow: GREEN QA with every mandatory
+requirement addressed, no unsupported claims, no current-project contamination, exact
+budget reconciliation, validated previous-work annex, client draft free of internal
+markers, clean final export — plus guard-flip tests (non-reconciling budget → RED).
+
+### Tests: +37 new (production hardening + Jordan regression). No approved content changed.
+
+---
+
 ## [0.6.3] — 2026-11-10
 
 ### Changed — Decision Review UX: native interactive option cards (UX patch only)

@@ -40,7 +40,7 @@ def main(argv=None) -> int:
     if not run_dir.exists():
         _err(f"Run directory not found: {run_dir}")
 
-    report = run_final_qa(run_dir, plugin_version="0.6.0")
+    report = run_final_qa(run_dir)  # version resolved from plugin.json
 
     # persist
     (run_dir / "final_qa.json").write_text(

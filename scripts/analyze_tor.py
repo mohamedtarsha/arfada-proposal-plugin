@@ -45,6 +45,7 @@ from engine.tor.decision_model import (
     DecisionCandidate, _OPEN_TYPES, _CONSTRAINT_TYPES,
 )
 from engine.tor.assignment_type import infer_assignment_type
+from engine.tor.version import plugin_version
 
 
 # ---------------------------------------------------------------------------
@@ -390,7 +391,7 @@ def analyze(tor_path: str | Path, output_root: str | Path | None = None) -> dict
         "file_path": str(tor_path),
         "file_name": tor_path.name,
         "analyzed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "plugin_version": "0.5.0",
+        "plugin_version": plugin_version(),
         "diagnostics": diagnostics,
         "assignment_type": assignment_type,
         "metadata": metadata,
