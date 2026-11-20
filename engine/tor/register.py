@@ -36,16 +36,23 @@ class Status:
     SKIPPED = "SKIPPED"
     UNRESOLVED = "UNRESOLVED"
     RECOMMENDATION = "RECOMMENDATION"   # suggested but not yet approved by user
+    # Fast Proposal Mode: evidence-supported, safe for Draft v1, not yet user-approved.
+    PROVISIONAL = "PROVISIONAL_RECOMMENDATION"
 
     @staticmethod
     def all():
-        return {Status.OPEN, Status.RESOLVED, Status.DEFERRED,
-                Status.SKIPPED, Status.UNRESOLVED, Status.RECOMMENDATION}
+        return {Status.OPEN, Status.RESOLVED, Status.DEFERRED, Status.SKIPPED,
+                Status.UNRESOLVED, Status.RECOMMENDATION, Status.PROVISIONAL}
 
     @staticmethod
     def terminal():
         """States that count as 'done' for this session."""
         return {Status.RESOLVED, Status.DEFERRED, Status.UNRESOLVED, Status.SKIPPED}
+
+    @staticmethod
+    def usable():
+        """States whose value may be used in a working draft (Draft v1)."""
+        return {Status.RESOLVED, Status.PROVISIONAL}
 
     @staticmethod
     def actionable():
@@ -412,6 +419,48 @@ def approve_recommendation(reg: DecisionRegister, decision_id: str,
     return {"valid": True, "message": "Recommendation approved and resolved"}
 
 
+def provisional_recommend(reg: DecisionRegister, decision_id: str, value: Any,
+                          rationale: str = "", recommender: str = "autopilot") -> dict:
+    """Set a decision to PROVISIONAL_RECOMMENDATION (Fast Proposal Mode).
+
+    Evidence-supported, usable in Draft v1, but NOT user-approved. Validated against
+    TOR constraints just like a resolved value. The user can approve (→ RESOLVED) or
+    edit later. Both selected_value and recommendation are stored so an edit/approve
+    path works.
+    """
+    entry = _get_entry(reg, decision_id)
+    result = validate_value(entry, value)
+    if not result["valid"]:
+        return result
+    entry.previous_value = entry.selected_value
+    entry.selected_value = value
+    entry.recommendation = value
+    entry.value_type = _infer_value_type(value)
+    entry.decision_status = Status.PROVISIONAL
+    entry.decided_by = recommender
+    entry.decided_at = _now()
+    if rationale:
+        entry.notes = rationale
+    return {"valid": True, "message": "Provisional recommendation recorded"}
+
+
+def approve_provisional(reg: DecisionRegister, decision_id: str,
+                        notes: str | None = None) -> dict:
+    """Promote a PROVISIONAL_RECOMMENDATION to RESOLVED (explicit user approval)."""
+    entry = _get_entry(reg, decision_id)
+    if entry.decision_status != Status.PROVISIONAL:
+        return {"valid": False, "message": "No provisional recommendation to approve"}
+    result = validate_value(entry, entry.selected_value)
+    if not result["valid"]:
+        return result
+    entry.decision_status = Status.RESOLVED
+    entry.decided_by = "user (approved provisional)"
+    entry.decided_at = _now()
+    if notes:
+        entry.notes = notes
+    return {"valid": True, "message": "Provisional recommendation approved and resolved"}
+
+
 def protect_fixed_requirement(entry: DecisionEntry) -> bool:
     """True if this entry must not be altered (TOR-fixed)."""
     return not entry.decision_id or entry.decision_type in {
@@ -440,6 +489,7 @@ def get_summary(reg: DecisionRegister) -> dict:
         "unresolved": by_status.get(Status.UNRESOLVED, 0),
         "open": by_status.get(Status.OPEN, 0),
         "recommendation": by_status.get(Status.RECOMMENDATION, 0),
+        "provisional": by_status.get(Status.PROVISIONAL, 0),
         "percent_complete": round(
             100.0 * by_status.get(Status.RESOLVED, 0) / total, 1
         ) if total > 0 else 0.0,

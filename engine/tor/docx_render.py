@@ -216,12 +216,18 @@ def render_docx(
     tor: dict,
     internal: bool,
     logo_path: Optional[str] = None,
+    draft_version: Optional[int] = None,
 ) -> dict:
     """Render a proposal DOCX (internal or client). Returns a summary dict.
+
+    When draft_version is set (Fast Proposal Mode), render a client-style WORKING
+    draft named proposal_draft_v{N}.docx: no internal markers, gap-tolerant, labelled
+    as a working document — the first useful output, even if evidence is still missing.
 
     Raises ValueError if a client export is requested but a section has a hard
     unsupported-fact failure (client safety, spec §27).
     """
+    is_draft = draft_version is not None
     run_dir = Path(run_dir)
     sections_dir = run_dir / "generated_sections"
 
@@ -243,7 +249,12 @@ def render_docx(
     _cover(doc, title=title, assignment_label=assignment_label, client=client,
            country=country, date=date, logo_path=logo_path)
 
-    if not internal:
+    if is_draft:
+        banner = doc.add_paragraph(style=SUBTITLE)
+        banner.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        banner.add_run(f"WORKING DRAFT v{draft_version} — NOT FOR SUBMISSION")
+        _page_break(doc)
+    elif not internal:
         banner = doc.add_paragraph(style=SUBTITLE)
         banner.alignment = WD_ALIGN_PARAGRAPH.CENTER
         # client draft marker when evidence gaps remain
@@ -295,7 +306,10 @@ def render_docx(
             f"knowledge {knowledge_snapshot_version(run_dir)} · "
             f"run {blueprint.get('run_id', run_dir.name)}")
 
-    variant = "internal_review" if internal else "client_draft"
+    if is_draft:
+        variant = f"draft_v{draft_version}"
+    else:
+        variant = "internal_review" if internal else "client_draft"
     out_path = run_dir / f"proposal_{variant}.docx"
     doc.save(str(out_path))
 

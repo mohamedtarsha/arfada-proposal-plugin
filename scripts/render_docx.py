@@ -43,15 +43,33 @@ def _read_json(path: Path) -> dict:
 def main(argv=None) -> int:
     args = argv or sys.argv[1:]
     if not args:
-        _err("Usage: render_docx.py <run_dir> --internal|--client [--logo <path>]")
+        _err("Usage: render_docx.py <run_dir> --internal|--client|--draft [--version N] [--logo <path>]")
     run_dir = Path(args[0]).expanduser().resolve()
     if not run_dir.exists():
         _err(f"Run directory not found: {run_dir}")
 
     internal = "--internal" in args
     client = "--client" in args
-    if internal == client:
-        _err("Specify exactly one of --internal or --client")
+    draft = "--draft" in args
+    draft_version = None
+    if draft:
+        internal = False
+        client = False
+        draft_version = 1
+        if "--version" in args:
+            i = args.index("--version")
+            if i + 1 < len(args):
+                draft_version = int(args[i + 1])
+        else:
+            # derive from draft_state.json if present
+            ds = run_dir / "draft_state.json"
+            if ds.exists():
+                try:
+                    draft_version = int(json.loads(ds.read_text()).get("version", 1))
+                except Exception:
+                    draft_version = 1
+    elif internal == client:
+        _err("Specify exactly one of --internal, --client, or --draft")
     logo = None
     if "--logo" in args:
         i = args.index("--logo")
@@ -71,14 +89,18 @@ def main(argv=None) -> int:
 
     # pre-export QA
     qa = preexport_check(run_dir)
-    if client and not qa["client_safe"]:
-        _err({"status": "BLOCKED", "reason": "client export blocked by pre-export QA",
-              "errors": qa["errors"]}, 5)
-    if not qa["ok"] and not qa["client_safe"] and internal:
-        # internal export proceeds even with warnings, but hard errors block it too
-        hard = [e for e in qa["errors"] if "missing" in e or "FAILED" in e or "no READY" in e]
-        if hard:
-            _err({"status": "BLOCKED", "reason": "internal export blocked", "errors": hard}, 5)
+    # Fast Proposal Mode: a WORKING draft is produced even with gaps — QA gates the
+    # FINAL/client deliverable, not the working draft (§1/§5). Internal markers and
+    # `[To be provided]` are still omitted by the client-style renderer.
+    if not draft:
+        if client and not qa["client_safe"]:
+            _err({"status": "BLOCKED", "reason": "client export blocked by pre-export QA",
+                  "errors": qa["errors"]}, 5)
+        if not qa["ok"] and not qa["client_safe"] and internal:
+            # internal export proceeds even with warnings, but hard errors block it too
+            hard = [e for e in qa["errors"] if "missing" in e or "FAILED" in e or "no READY" in e]
+            if hard:
+                _err({"status": "BLOCKED", "reason": "internal export blocked", "errors": hard}, 5)
 
     blueprint = _read_json(run_dir / "proposal_blueprint.json")
     status_doc = _read_json(run_dir / "generation_status.json")
@@ -88,7 +110,8 @@ def main(argv=None) -> int:
 
     try:
         result = render_docx(run_dir=run_dir, blueprint=blueprint, status_doc=status_doc,
-                             tor=tor, internal=internal, logo_path=logo)
+                             tor=tor, internal=internal, logo_path=logo,
+                             draft_version=draft_version)
     except ValueError as e:
         _err({"status": "BLOCKED", "reason": str(e)}, 5)
 

@@ -79,7 +79,8 @@ def main(argv=None) -> int:
     if register:
         for d in register.get("decisions", []):
             if d.get("requirement_id") == "assignment_type" \
-                    and d.get("decision_status") == "RESOLVED" and d.get("selected_value"):
+                    and d.get("decision_status") in ("RESOLVED", "PROVISIONAL_RECOMMENDATION") \
+                    and d.get("selected_value"):
                 assignment_type = str(d["selected_value"]).upper()
 
     tor_identity = register.get("tor_identity") if register else run_id

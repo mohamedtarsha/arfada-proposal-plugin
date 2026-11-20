@@ -10,10 +10,10 @@ trigger: /arfada-proposal
 
 # ARFADA Proposal Assistant
 
-**Plugin version:** 0.6.4
+**Plugin version:** 0.6.5
 **Publisher:** ARFADA
-**Status:** Complete + Writing DNA + Production Workflow — init → TOR → decisions →
-knowledge → generation → budget → DOCX → Final QA → package → export
+**Status:** Fast Proposal Mode (default) — TOR → useful Word draft fast, ≤5 questions,
+auto-recommend, provisional decisions, two-status QA; full safety engines unchanged
 
 ---
 
@@ -22,11 +22,11 @@ knowledge → generation → budget → DOCX → Final QA → package → export
 When invoked without context, print:
 
 ```
-ARFADA Proposal Assistant v0.6.4
+ARFADA Proposal Assistant v0.6.5
 
-  0. Run Initialization        — verify knowledge, DNA, historical pairs, versions
+  ★ Fast Proposal Mode (DEFAULT) — TOR → proposal_draft_v1.docx, ≤5 questions
   1. Analyze TOR               — provide a .pdf or .docx file
-  2. Review Proposal Decisions — review and record proposal choices
+  2. Review Proposal Decisions — refine the auto-recommended setup
   3. Refresh ARFADA Knowledge  — scan the local ARFADA Knowledge folder
   4. Generate Proposal Draft   — build a TOR-grounded draft section by section
   5. Export Word               — professional DOCX (internal review / client draft)
@@ -35,15 +35,82 @@ ARFADA Proposal Assistant v0.6.4
 Also: "Set ARFADA Knowledge Folder", "ARFADA Knowledge Status"
 ```
 
-If a run directory is already in context (from previous analysis), offer the
+When the user provides a TOR, **default to Fast Proposal Mode** — do not walk them
+through decision cards one by one. If a run directory is already in context, offer the
 relevant next step with `[run: <run_id>]`.
 
 ---
 
-## Default proposal workflow (v0.6.4 — productionized)
+## ★ Fast Proposal Mode (DEFAULT)
 
-Follow this order by default so each TOR needs far less manual intervention. Every
-step is deterministic Python; the active session handles conversation and content.
+**Primary goal: TOR → a useful Word proposal draft as fast as possible.** Keep every
+existing safety engine (provenance, unsupported-claim prevention, current-project
+exclusion, CV-evidence rules, budget reconciliation, client/internal separation, annex
+validation, final-export sanitization). This mode changes the WORKFLOW only — far
+fewer interruptions before the user receives a document.
+
+**The flow (0–5 questions, then a DOCX):**
+
+```
+Upload TOR → analyze → ≤5 questions (only if truly needed) →
+proposal_draft_v1.docx + internal_gaps.md → user corrections →
+proposal_draft_v2.docx → … → Final QA → proposal_final.docx
+```
+
+1. **Initialize + analyze** — `run_init.py --compact`, then `analyze_tor.py <file>`.
+2. **Autopilot setup** — `fast_proposal.py setup <run_dir>`:
+   - auto-recommends every decision (assignment type, methodology, sample/FGD/KII,
+     timeline, deliverables, section structure) as **PROVISIONAL_RECOMMENDATION**,
+   - auto-ranks the **provisional team** and the strongest **3–5 past projects**
+     (current project excluded),
+   - writes `proposed_setup.json` and `fast_questions.json`, and builds the blueprint.
+3. **Ask AT MOST 5 questions** — only those in `fast_questions.json` (budget ceiling,
+   strategic methodology, sensitive previous-work sharing, ambiguous assignment type,
+   a mandatory unknown fact). Present them together, not one card per small item.
+4. **Show the compact Proposed Setup** (from `proposed_setup.json`) — one screen. Tell
+   the user they can edit any item later; do NOT require per-item approval.
+5. **Generate sections** with the provisional setup, then render the first output:
+   ```bash
+   python "<plugin_root>/scripts/render_docx.py" "<run_dir>" --draft   # proposal_draft_v1.docx
+   ```
+   **The first output must be a DOCX** — produce it even if some submission evidence is
+   still missing. A working draft is never withheld for a package gap.
+6. **Two-status QA + gaps** — `fast_proposal.py status <run_dir>`:
+   - `TECHNICAL_DRAFT_STATUS` (READY_FOR_REVIEW / NEEDS_FIXES / BLOCKED) and
+   - `SUBMISSION_PACKAGE_STATUS` (READY / NOT_READY),
+   - writes `internal_gaps.md` (team-only; never shown to the client).
+   Present e.g. "Technical Draft: READY FOR REVIEW · Submission Package: NOT READY".
+7. **One-click iteration** — when the user supplies a missing fact or changes a
+   decision, update that decision, regenerate only the affected sections, bump the
+   version (`fast_proposal.py next-version <run_dir>`), and render
+   `proposal_draft_v{N}.docx`. Do **not** restart TOR analysis.
+8. **Finalize** — once the package is complete and decisions approved, run Final QA and
+   `export_final.py` for the gated, sanitized `proposal_final.docx`.
+
+**Provisional decisions (`PROVISIONAL_RECOMMENDATION`)** are evidence-supported and
+safe for Draft v1 but not user-approved. They appear in the working draft (a sample
+size, a methodology) but are **never** turned into unsupported *factual* claims — the
+fact engine still requires evidence/provenance. The user approves (→ RESOLVED) or edits
+any of them at any time.
+
+**Blockers:** `DRAFT_BLOCKER` (rare — technical content broken) stops a draft;
+`FINAL_SUBMISSION_BLOCKER` (registration, tax, submission channel, missing physical
+annex, unconfirmed mandatory staff availability, unreconciled budget) blocks only the
+FINAL submission; `WARNING`/`IMPROVEMENT` never block. **RED QA blocks final
+submission, not draft creation.**
+
+**Budget:** if rates are unavailable, draft the technical proposal and mark budget
+pending internally (a `FINAL_SUBMISSION_BLOCKER`) — do not block Draft v1. If figures
+are available, build the reconciled budget normally (`budget_builder.py`).
+
+The detailed per-capability steps (submission checklist, relevant experience, budget,
+previous-work annex, Final QA, package check, export) below are used by both modes.
+
+---
+
+## Legacy step-by-step workflow (for refinement / manual control)
+
+Every step is deterministic Python; the active session handles conversation and content.
 
 0. **Run initialization** — `run_init.py` (verify sources, DNA, pairs, versions).
 1. **Analyze TOR** — `analyze_tor.py` (requirements, metadata, decisions, type).

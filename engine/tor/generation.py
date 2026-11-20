@@ -120,6 +120,22 @@ def build_packet(
                 "maximum": d.get("maximum"),
                 "instruction": f"Use the approved value EXACTLY: {d.get('selected_value')}",
             })
+        elif status == "PROVISIONAL_RECOMMENDATION":
+            # Fast Proposal Mode: an evidence-supported recommendation, safe for the
+            # working draft but not yet user-approved. Use the value so Draft v1 is
+            # concrete; it is flagged provisional for review (and in internal_gaps.md).
+            applied_decisions.append({
+                "decision_id": d["decision_id"],
+                "requirement_id": d["requirement_id"],
+                "status": "PROVISIONAL_RECOMMENDATION",
+                "selected_value": d.get("selected_value"),
+                "constraint_type": d.get("constraint_type"),
+                "minimum": d.get("minimum"),
+                "maximum": d.get("maximum"),
+                "instruction": (f"Use the provisional recommended value {d.get('selected_value')}. "
+                                "It is evidence-supported and may be refined after review; "
+                                "do not present it as a final client commitment."),
+            })
         elif status == "DEFERRED":
             applied_decisions.append({
                 "decision_id": d["decision_id"],
@@ -140,7 +156,7 @@ def build_packet(
         constraint = None
         for dep in s.get("decision_dependencies", []):
             d = dec_by_id.get(dep)
-            if d and d.get("decision_status") == "RESOLVED":
+            if d and d.get("decision_status") in ("RESOLVED", "PROVISIONAL_RECOMMENDATION"):
                 constraint = {"value": d.get("selected_value"),
                               "minimum": d.get("minimum"), "maximum": d.get("maximum")}
         slot_descriptors.append({
@@ -369,9 +385,11 @@ def validate_candidate(packet: dict, candidate: dict) -> dict:
                                  "requirement_id": s["requirement_id"],
                                  "reason": "status MISSING"})
 
-    # --- resolved-decision value enforcement ---
+    # --- resolved/provisional-decision value enforcement ---
+    # Both an approved (RESOLVED) and an evidence-supported provisional value must be
+    # used consistently; a different in-range number on the same metric is a violation.
     for d in packet.get("applied_decisions", []):
-        if d.get("status") != "RESOLVED":
+        if d.get("status") not in ("RESOLVED", "PROVISIONAL_RECOMMENDATION"):
             continue
         val = d.get("selected_value")
         if isinstance(val, (int, float)):

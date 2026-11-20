@@ -3,11 +3,13 @@
 A Claude Code plugin for ARFADA staff. Brings structured TOR analysis and
 proposal drafting into Claude Code — distributed privately via GitHub.
 
-> **Status:** COMPLETE (v0.6.4) — TOR Analysis → Decision Review → Local Knowledge →
-> Controlled Generation → Professional Word → Final Quality Review (GREEN/YELLOW/RED),
-> plus a local **Winning Proposal Library / ARFADA Writing DNA** (style only).
-> Core development done; the plugin is in team use. Future work = small bugfixes +
-> real-TOR tuning from actual usage.
+> **Status:** COMPLETE (v0.6.5) — **Fast Proposal Mode** is the default: TOR → a useful
+> Word draft (`proposal_draft_v1.docx`) with ≤5 questions, auto-recommended provisional
+> decisions, auto-ranked team + experience, and a two-status QA (technical draft vs
+> submission package). All v0.6.4 safety engines are kept — provenance, unsupported-claim
+> prevention, current-project exclusion, CV-evidence rules, budget reconciliation,
+> client/internal separation, annex validation, final-export sanitization. RED QA blocks
+> the FINAL submission, not draft creation.
 >
 > **v0.6.4 (production hardening):** the reusable workflow from the first real run —
 > run initialization summary, classified submission checklist (mandatory/scoring/

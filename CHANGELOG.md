@@ -6,6 +6,52 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.6.5] — 2026-11-21
+
+### Fast Proposal Mode (default UX) — TOR → useful Word draft, fast
+
+The default experience is now **Fast Proposal Mode**: get the user a usable first Word
+draft with as few interruptions as possible. Workflow only — the evidence, provenance,
+QA, knowledge, and validation engines are unchanged, and every v0.6.4 safety guard is
+kept.
+
+- **Autopilot** (`engine/tor/autopilot.py` + `scripts/fast_proposal.py setup`) —
+  auto-recommends every decision (assignment type, methodology, sample/FGD/KII,
+  timeline, deliverables, section structure), auto-ranks the provisional team and the
+  strongest 3–5 past projects (current project excluded), and surfaces **at most 5
+  questions** — only where an answer is truly necessary and cannot be safely
+  recommended. Emits one compact `proposed_setup.json`, not one card per item.
+- **Provisional decisions** (`PROVISIONAL_RECOMMENDATION`) — a new register status:
+  evidence-supported, usable in Draft v1, not yet user-approved. Generation uses the
+  value (flagged provisional, never an unsupported factual claim); `approve_provisional`
+  promotes it to RESOLVED.
+- **First output is a DOCX** — `render_docx.py --draft` produces `proposal_draft_v1.docx`
+  (client-style, gap-tolerant, "WORKING DRAFT" banner) even if submission evidence is
+  still missing. Draft versions bump via `fast_proposal.py next-version`.
+- **Blocker taxonomy** (`engine/tor/blockers.py`) — DRAFT_BLOCKER (rare) /
+  FINAL_SUBMISSION_BLOCKER / WARNING / IMPROVEMENT. Package/compliance gaps never stop a
+  technical draft.
+- **Two-status QA** (`engine/tor/fast_qa.py` + `fast_proposal.py status`) —
+  `TECHNICAL_DRAFT_STATUS` and `SUBMISSION_PACKAGE_STATUS` reported separately; a
+  missing package document makes the package NOT READY without making the draft RED.
+  Writes team-only `internal_gaps.md` (never leaked to the client).
+- **One-click iteration** — supply a fact / change a decision → regenerate only the
+  affected sections → next `proposal_draft_v{N}.docx`, without restarting TOR analysis.
+
+Kept intact: provenance, unsupported-claim prevention, current-project exclusion,
+CV-evidence rules, budget reconciliation, client/internal separation, annex validation,
+final-export sanitization. RED QA still blocks the FINAL submission, not draft creation.
+
+### §Regression
+`tests/test_fast_mode.py` adds a synthetic **South Darfur** conflict-context scenario
+and a **Jordan** working-draft scenario: ≤5 questions, provisional recommendations,
+`proposal_draft_v1.docx` renders, and a missing registration/package item leaves the
+technical draft READY while the submission package is NOT READY.
+
+### Tests: +21 new (Fast Proposal Mode + regressions). Full suite green.
+
+---
+
 ## [0.6.4] — 2026-11-14
 
 ### Production hardening — reusable workflow from the first real end-to-end run
