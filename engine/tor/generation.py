@@ -229,7 +229,17 @@ def build_packet(
         "style_guidance": {
             "writing_dna": writing_dna or {},
             "response_patterns": response_patterns or {},
-            "authority": "LOWEST — style/structure only, never a source of facts",
+            # Facts: LOWEST authority. Voice/style: PRIMARY (§8) — when Writing DNA is
+            # active, ARFADA's historical writing patterns take precedence over generic
+            # model proposal-writing habits. This NEVER changes facts, approved/
+            # provisional decisions, methodology numbers, or budget values.
+            "authority": ("FACTS: lowest — never a source of facts. "
+                          "VOICE/STYLE: primary — write in ARFADA's established voice "
+                          "from the exemplars below, not generic AI proposal style."),
+            "voice_priority": True,
+            "avoid_generic": ["robust", "comprehensive", "holistic", "rigorous",
+                              "seamless", "tailored", "this approach ensures",
+                              "this will ensure", "our methodology will ensure"],
             "anti_copy": ("Learn the STYLE, STRUCTURE, and REASONING pattern from the "
                           "historical exemplars below. NEVER copy their wording, project "
                           "names, client names, personnel, dates, or numbers. Write fresh "

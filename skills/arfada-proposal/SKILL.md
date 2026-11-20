@@ -10,10 +10,11 @@ trigger: /arfada-proposal
 
 # ARFADA Proposal Assistant
 
-**Plugin version:** 0.6.5
+**Plugin version:** 0.6.6
 **Publisher:** ARFADA
-**Status:** Fast Proposal Mode (default) — TOR → useful Word draft fast, ≤5 questions,
-auto-recommend, provisional decisions, two-status QA; full safety engines unchanged
+**Status:** Fast Proposal Mode (default) + mandatory ARFADA Writing DNA — TOR → useful
+Word draft fast, ≤5 questions, auto-recommend, provisional decisions, two-status QA,
+section-specific historical style + style QA; full safety engines unchanged
 
 ---
 
@@ -22,9 +23,10 @@ auto-recommend, provisional decisions, two-status QA; full safety engines unchan
 When invoked without context, print:
 
 ```
-ARFADA Proposal Assistant v0.6.5
+ARFADA Proposal Assistant v0.6.6
 
   ★ Fast Proposal Mode (DEFAULT) — TOR → proposal_draft_v1.docx, ≤5 questions
+     (writes in ARFADA's Writing DNA; style QA on each draft)
   1. Analyze TOR               — provide a .pdf or .docx file
   2. Review Proposal Decisions — refine the auto-recommended setup
   3. Refresh ARFADA Knowledge  — scan the local ARFADA Knowledge folder
@@ -75,16 +77,24 @@ proposal_draft_v2.docx → … → Final QA → proposal_final.docx
    ```
    **The first output must be a DOCX** — produce it even if some submission evidence is
    still missing. A working draft is never withheld for a package gap.
-6. **Two-status QA + gaps** — `fast_proposal.py status <run_dir>`:
+   Writing DNA is **mandatory** here: generation runs with section-specific historical
+   exemplars + ARFADA's Writing DNA so the draft reads like ARFADA wrote it (see
+   "★ Writing DNA" below).
+6. **Writing-DNA style QA** — `fast_proposal.py style <run_dir>` (or `style_qa.py`):
+   flags generic AI filler, stock phrases, unnatural uniformity, excessive
+   headings/bullets, divergence from ARFADA style, and suspicious copying, with
+   targeted rewrite suggestions. **Rewrite WORDING ONLY** — never change facts,
+   decisions, methodology numbers, or budget values. Apply the edits, then re-render.
+7. **Two-status QA + gaps** — `fast_proposal.py status <run_dir>`:
    - `TECHNICAL_DRAFT_STATUS` (READY_FOR_REVIEW / NEEDS_FIXES / BLOCKED) and
    - `SUBMISSION_PACKAGE_STATUS` (READY / NOT_READY),
    - writes `internal_gaps.md` (team-only; never shown to the client).
    Present e.g. "Technical Draft: READY FOR REVIEW · Submission Package: NOT READY".
-7. **One-click iteration** — when the user supplies a missing fact or changes a
+8. **One-click iteration** — when the user supplies a missing fact or changes a
    decision, update that decision, regenerate only the affected sections, bump the
    version (`fast_proposal.py next-version <run_dir>`), and render
    `proposal_draft_v{N}.docx`. Do **not** restart TOR analysis.
-8. **Finalize** — once the package is complete and decisions approved, run Final QA and
+9. **Finalize** — once the package is complete and decisions approved, run Final QA and
    `export_final.py` for the gated, sanitized `proposal_final.docx`.
 
 **Provisional decisions (`PROVISIONAL_RECOMMENDATION`)** are evidence-supported and
@@ -105,6 +115,62 @@ are available, build the reconciled budget normally (`budget_builder.py`).
 
 The detailed per-capability steps (submission checklist, relevant experience, budget,
 previous-work annex, Final QA, package check, export) below are used by both modes.
+
+---
+
+## ★ Writing DNA (MANDATORY writing layer)
+
+New proposals must be **newly written** but read like **ARFADA's own human proposal
+team** wrote them, learned from ARFADA's previously successful proposals (14 indexed
+TOR↔Proposal pairs). This layer is always on when the corpus is available.
+
+**Persistence.** The corpus and its Writing DNA persist across chats and runs under
+`ARFADA_HOME/exemplars/` — the user never re-connects or re-indexes. If the live
+folder is unavailable but a valid persisted index exists, the persisted index is
+loaded automatically. At run start, show internally:
+
+```
+Writing DNA: ACTIVE
+Historical pairs: 14
+Relevant historical proposals retrieved: X    (from fast_proposal.py setup)
+Section exemplars used: X                      (per section during generation)
+```
+
+**Relevant-proposal retrieval.** `fast_proposal.py setup` ranks the historical
+proposals by assignment type, sector, country/region, client/donor, methodology,
+evaluation type, and humanitarian/development context, and uses the closest **2–4** as
+writing references (`writing_dna.relevant_proposals`).
+
+**Section-specific style.** Do NOT apply one generic style to the whole document.
+Generation retrieves **comparable historical sections separately** (Executive Summary
+→ past Executive Summaries, Methodology → past Methodology, Sampling → past Sampling,
+Data Collection, Work Plan, Team, Relevant Experience, Risk, Deliverables, …), already
+wired into `prepare_section.py`.
+
+**Learn ARFADA's real style** from the Writing DNA + exemplars: paragraph length and
+variation, organizational voice, formality, technical-detail density, terminology,
+transitions, prose-vs-bullets balance, how ARFADA opens sections, explains and
+justifies methodology, describes limitations, presents experience and team
+qualifications, and its degree of assertiveness. The target is *"ARFADA wrote a new
+proposal using its established practice"*, not *"AI generated a professional proposal"*.
+
+**Reduce generic AI writing.** Avoid templated language (robust, comprehensive,
+holistic, rigorous, seamless, tailored, "this approach ensures", "this will ensure",
+"our methodology will ensure"), uniform paragraph lengths, repetitive structures,
+excessive headings/bullets, repeated ideas across sections, and generic introductions.
+Prefer specific, contextual, operational, naturally-varied prose. (Not a mechanical
+word ban — the style QA flags *excessive/repetitive* usage.)
+
+**Style sources only — never facts.** Historical proposals provide style, structure,
+and reasoning patterns ONLY. Never copy historical sample sizes, staff/project facts,
+dates, budgets, client/donor facts, organizational metrics, or deliverables unless
+independently verified by THIS TOR or current ARFADA Knowledge. The anti-copy guard
+(verbatim overlap + long shared phrases + historical entity leak) runs in both section
+validation and Final QA.
+
+**Voice priority.** When Writing DNA is active, ARFADA's historical writing patterns
+take precedence over generic model proposal-writing habits — but this NEVER changes
+verified facts, approved/provisional decisions, methodology numbers, or budget values.
 
 ---
 

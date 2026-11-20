@@ -6,6 +6,53 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.6.6] — 2026-11-21
+
+### ARFADA Writing DNA — mandatory writing layer over Fast Proposal Mode
+
+New proposals are newly written but read like ARFADA's own proposal team wrote them,
+learned from the 14 indexed TOR↔Proposal pairs. The Fast workflow is unchanged; this
+adds a writing layer on top.
+
+- **Persistence** — the corpus + Writing DNA persist under `ARFADA_HOME/exemplars/`
+  across chats/runs; if the live folder is unavailable but a valid persisted index
+  exists, it is loaded automatically. `fast_proposal.py setup` reports
+  `writing_dna.active`, `historical_pairs`, and `relevant_proposals_retrieved`.
+- **Relevant-proposal retrieval** (`engine/tor/exemplars/retrieval.py`) — now ranks by
+  assignment type, sector, country/region, client/donor, evaluation type, and
+  humanitarian/development context (extra dimensions matched as tokens against the
+  project-folder name — no re-indexing of the confidential corpus). New
+  `relevant_proposals()` returns the closest 2–4 whole proposals; `retrieval_summary()`
+  powers the init line.
+- **Section-specific style** — generation already retrieves comparable historical
+  sections separately (Exec Summary → past Exec Summaries, Methodology → past
+  Methodology, …); `prepare_section.py` now passes sector/evaluation-type/thematic.
+- **Reduce generic AI writing + Style QA** (`engine/tor/style_qa.py`,
+  `scripts/style_qa.py`, `fast_proposal.py style`) — deterministic checks for generic
+  filler (robust/comprehensive/holistic/…, "this approach ensures", …), unnatural
+  uniformity, excessive headings/bullets, divergence from ARFADA's historical style,
+  and suspicious copying, with targeted rewrite suggestions. **Wording only** — never
+  changes facts, decisions, methodology numbers, or budget values. A `conformance()`
+  score lets regression confirm ARFADA-styled prose out-scores generic templates.
+- **Anti-copy** — `anticopy.long_shared_phrases()` surfaces the actual long verbatim
+  runs reused from historical proposals (short standard phrases are acceptable); the
+  existing 8-gram overlap + entity-leak guards are unchanged and still run in section
+  validation and Final QA.
+- **Voice priority** — when Writing DNA is active, ARFADA's historical voice takes
+  precedence over generic model style, but NEVER over verified facts, approved/
+  provisional decisions, methodology numbers, or budget values. Historical proposals
+  remain STYLE sources only — never factual authority.
+
+### §Regression
+`tests/test_writing_dna.py` uses a synthetic corpus + the Jordan backbone and a South
+Darfur scenario: ranking, section-specific retrieval, style QA findings, long-phrase
+anti-copy, and the measurable criterion that ARFADA-styled text out-scores generic
+templated text while staying newly written.
+
+### Tests: +17 new (Writing DNA layer). Full suite green.
+
+---
+
 ## [0.6.5] — 2026-11-21
 
 ### Fast Proposal Mode (default UX) — TOR → useful Word draft, fast

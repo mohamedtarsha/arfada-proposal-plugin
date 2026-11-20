@@ -83,6 +83,36 @@ def similarity_report(generated: str, exemplar_excerpts: list[str]) -> dict:
     }
 
 
+def long_shared_phrases(generated: str, exemplar_excerpts: list[str],
+                         n: int = _NGRAM) -> list[str]:
+    """Return actual verbatim phrases of >= n words shared with any exemplar.
+
+    Standard short technical phrases are acceptable, so only long reused runs are
+    returned (for style-QA reporting / targeted rewrite). Deterministic.
+    """
+    gen_tokens = _tokens(generated)
+    phrases = []
+    for ex in exemplar_excerpts or []:
+        ex_ngrams = _ngrams(_tokens(ex), n)
+        if not ex_ngrams:
+            continue
+        i = 0
+        gl = len(gen_tokens)
+        while i <= gl - n:
+            if " ".join(gen_tokens[i:i + n]) in ex_ngrams:
+                run = n
+                while i + run < gl and " ".join(
+                        gen_tokens[i + run - n + 1:i + run + 1]) in ex_ngrams:
+                    run += 1
+                phrases.append(" ".join(gen_tokens[i:i + run]))
+                i += run
+            else:
+                i += 1
+    # dedupe, keep the longest, cap for reporting
+    phrases = sorted(set(phrases), key=lambda p: -len(p.split()))
+    return phrases[:10]
+
+
 def leaked_historical_entities(text: str, exemplar_meta: list[dict]) -> list[str]:
     """Detect old client/project tokens from historical metadata appearing in new text.
 

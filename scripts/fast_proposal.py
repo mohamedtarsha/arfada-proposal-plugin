@@ -68,6 +68,24 @@ def cmd_setup(args) -> int:
 
     result = autopilot.autopilot(tor, requirements, candidates, knowledge)
 
+    # Writing DNA (mandatory writing layer) — persisted across sessions, auto-loaded.
+    dna_summary = {"writing_dna_active": False, "historical_pairs": 0,
+                   "relevant_proposals_retrieved": 0}
+    try:
+        from engine.tor.exemplars import retrieval as _ex
+
+        def _mv(k):
+            e = tor.get("metadata", {}).get(k)
+            return (e.get("value", "") if isinstance(e, dict) else "").strip()
+        at = tor.get("assignment_type", {})
+        dna_summary = _ex.retrieval_summary(
+            assignment_type=at.get("assignment_type") or "",
+            country=_mv("country"), sector=_mv("sector"),
+            evaluation_type=at.get("assignment_type") or "",
+            thematic=_mv("assignment") or _mv("title"))
+    except Exception:
+        pass
+
     # persist provisional decisions into the register (init if needed)
     from engine.tor.register import (init_register, load_register, save_register,
                                      provisional_recommend)
@@ -113,10 +131,29 @@ def cmd_setup(args) -> int:
         "questions": result["questions"],
         "team_needs_question": result["team"].get("team_needs_question"),
         "proposed_setup": result["proposed_setup"],
+        "writing_dna": {
+            "active": dna_summary.get("writing_dna_active"),
+            "historical_pairs": dna_summary.get("historical_pairs"),
+            "relevant_proposals_retrieved": dna_summary.get("relevant_proposals_retrieved"),
+            "relevant_proposals": dna_summary.get("relevant_proposals", []),
+        },
         "blueprint": blueprint_status,
-        "next": "Answer up to 5 questions if any, then generate sections and run: "
-                "render_docx.py <run_dir> --draft  →  proposal_draft_v1.docx",
+        "next": "Answer up to 5 questions if any, then generate sections (Writing DNA "
+                "active), render_docx.py <run_dir> --draft → proposal_draft_v1.docx, "
+                "then fast_proposal.py style <run_dir> for the Writing-DNA style QA.",
     })
+    return 0
+
+
+def cmd_style(args) -> int:
+    if not args:
+        _err("Usage: fast_proposal.py style <run_dir>")
+    run_dir = Path(args[0]).expanduser().resolve()
+    from engine.tor.style_qa import style_qa_report
+    report = style_qa_report(run_dir)
+    (run_dir / "style_qa.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    _out(report)
     return 0
 
 
@@ -175,7 +212,7 @@ def cmd_next_version(args) -> int:
 
 
 _COMMANDS = {"setup": cmd_setup, "status": cmd_status, "gaps": cmd_gaps,
-             "next-version": cmd_next_version}
+             "next-version": cmd_next_version, "style": cmd_style}
 
 
 def main(argv=None) -> int:

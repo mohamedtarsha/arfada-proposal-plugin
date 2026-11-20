@@ -104,9 +104,18 @@ def main(argv=None) -> int:
         if _ex.is_configured():
             writing_dna = _ex.writing_dna()
             response_patterns = _ex.response_patterns()
+            _sector = ""
+            _title = ""
+            _am = assignment_metadata if isinstance(assignment_metadata, dict) else {}
+            if isinstance(_am.get("sector"), dict):
+                _sector = _am["sector"].get("value", "")
+            if isinstance(_am.get("assignment"), dict):
+                _title = _am["assignment"].get("value", "")
             historical_exemplars = _ex.retrieve_for_section(
                 section_id, assignment_type=blueprint.get("assignment_type", ""),
-                country=country, region="MENA", top=3)
+                country=country, region="MENA", sector=_sector,
+                evaluation_type=blueprint.get("assignment_type", ""),
+                thematic=_title, top=3)
     except Exception:
         pass
 

@@ -3837,8 +3837,11 @@ class TestExemplarSourceSeparation(unittest.TestCase):
         # exemplar content must NOT appear in verified_arfada_facts
         self.assertEqual(packet["verified_arfada_facts"], [])
         self.assertIn("historical_exemplars", packet)
-        self.assertEqual(packet["style_guidance"]["authority"],
-                         "LOWEST — style/structure only, never a source of facts")
+        # authority must still make clear exemplars are never a source of facts
+        # (v0.6.6 clarifies voice-priority for STYLE while keeping facts lowest).
+        authority = packet["style_guidance"]["authority"].lower()
+        self.assertIn("never a source of facts", authority)
+        self.assertIn("lowest", authority)
 
     def test_no_corpus_committed(self):
         """No real proposal/corpus content or exemplar cache is tracked in Git."""
