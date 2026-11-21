@@ -183,8 +183,8 @@ def scan_staff(root: Path, cache: Cache, state: dict, report: dict) -> None:
                 profiles.append(apply_country(prev[fid], rel))  # keep last good
             continue
         if fid in prev and file_state.get(fid, {}).get("modifiedTime") == mtime:
-            # unchanged CV: reuse parsed facts, refresh attribution only
-            profiles.append(with_document_type(apply_country(prev[fid], rel)))
+            # unchanged CV: reuse parsed facts, refresh attribution and re-check years
+            profiles.append(with_document_type(N.revalidate_years(apply_country(prev[fid], rel))))
             unchanged += 1
             continue
         text = _extract_text(f)
@@ -192,7 +192,7 @@ def scan_staff(root: Path, cache: Cache, state: dict, report: dict) -> None:
                               country=attribution["country"], modified_time=mtime)
         prof["source_rel_path"] = rel
         prof.update(attribution)
-        prof = with_document_type(prof)
+        prof = with_document_type(N.revalidate_years(prof))
         if not text.strip():
             prof["extraction_confidence"] = "LOW"
             prof["parse_warning"] = "no extractable text (possibly scanned)"

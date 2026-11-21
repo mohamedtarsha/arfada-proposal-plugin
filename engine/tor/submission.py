@@ -30,7 +30,8 @@ _MANDATORY_RE = re.compile(
 # Item identity cues → stable label + key. First match wins (order matters).
 _ITEMS = [
     ("previous_work", "Example of previous work",
-     r"\b(example|sample|previous|past)\b.*\b(work|report|evaluation|deliverable|assignment)\b"
+     r"\b(examples?|samples?|previous|past)\b.*\b(works?|reports?|evaluations?|deliverables?|"
+     r"assignments?|baselines?|surveys?|studies)\b"
      r"|\bwriting sample\b|\bsample report\b"),
     ("detailed_budget", "Detailed budget / financial offer",
      r"\b(detailed budget|budget breakdown|financial (?:offer|proposal|bid)|"

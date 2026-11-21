@@ -20,6 +20,13 @@ from typing import Any, Optional
 
 _KNOWLEDGE_DIR = Path(__file__).resolve().parent.parent.parent / "knowledge"
 
+# evaluation stage named in a tracker project's own name (for EVALUATION-coded rows)
+_STAGE_NAME = {
+    "ENDLINE": r"end[- ]?line|final\s+evalu|end[- ]of[- ]project",
+    "MIDLINE": r"mid[- ]?line|mid[- ]?term",
+    "BASELINE": r"base[- ]?line",
+}
+
 _STOP = {"the", "and", "for", "of", "in", "a", "an", "to", "on", "with", "project",
          "study", "evaluation", "assessment", "final", "report"}
 
@@ -265,6 +272,14 @@ class Knowledge:
             why = {}
             if assignment_type and p.get("assignment_type") == assignment_type:
                 score += 4; why["assignment_type"] = 4
+            elif assignment_type in _STAGE_NAME and p.get("assignment_type") == "EVALUATION":
+                # the tracker often codes endline / final evaluations as EVALUATION;
+                # the project's own name says which stage it was (v0.6.9)
+                pname = " ".join(str(p.get(k) or "") for k in ("project_name", "project_id"))
+                if re.search(_STAGE_NAME[assignment_type], pname, re.I):
+                    score += 4; why["assignment_type"] = 4
+                else:
+                    score += 2; why["assignment_family"] = 2
             if evaluation_type and evaluation_type.lower() in (
                     (p.get("assignment_type") or "") + " " + (p.get("sector") or "")).lower():
                 score += 2; why["evaluation_type"] = 2

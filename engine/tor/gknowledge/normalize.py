@@ -174,33 +174,115 @@ _EXP_DISQUALIFY = re.compile(
 _DATE_RANGE = re.compile(r"\b(19|20)\d{2}\s*[-–—/]\s*((19|20)\d{2}|present|now|date)\b", re.I)
 
 
-def _experience_years(text: str) -> tuple[Optional[int], str]:
-    """Extract years of professional experience, rejecting unrelated numbers.
+# v0.6.9: years are accepted only when the number is BOUND to the person's own
+# experience ("30 years of professional experience", "over 20 years' experience",
+# "experience: 12 years"). A loose "N years" near the word "working" is not enough:
+# "an NGO that has been working in Tanzania for over 30 years" is the organisation's
+# history, not the candidate's career.
+_PERSONAL_YEARS = re.compile(
+    r"(?:(?:over|more\s+than|nearly|almost|about|around|approximately|some|at\s+least)\s+)?"
+    r"(\d{1,2})\s*\+?[\s-]*(?:years?|yrs?)['’]?\s*(?:of\s+)?"
+    r"(?:(?!has\b|have\b|with\b|but\b|in\b|at\b|for\b|on\b)[^\W\d_][\w&/-]*\s+){0,4}?"
+    r"(?:experience|expertise|career)\b", re.I)
+# "N years in/of/across …" counts when the same clause marks it as the person's own
+# ("professional with over 12 years in …", "career spanning over 45 years").
+_SPAN_YEARS = re.compile(
+    r"(?:(?:over|more\s+than|nearly|almost|about|around|approximately|some|at\s+least)\s+)?"
+    r"(\d{1,2})\s*\+?\s*(?:years?|yrs?)\s+(?:in|of|across|as|since|[a-z]+ing)\b", re.I)
+_PERSONAL_CUE = re.compile(
+    r"\b(?:professional|career|experienced|expert|specialist|consultant|practitioner|"
+    r"journey|spans?|spanning|i\s+have|i['’]ve|with\s+(?:over|more\s+than|nearly|about|"
+    r"some|almost)?|has\s+(?:over|more\s+than|nearly|almost|about))\b|experience\s*:", re.I)
+_EXPERIENCE_OF = re.compile(
+    r"\b(?:experience|expertise)\s*(?:of|:|-|–|—|\(|spans?(?:\s+over)?|\s)\s*"
+    r"(?:over|more\s+than|about|nearly)?\s*"
+    r"(\d{1,2})\s*\+?\s*(?:years?|yrs?)\b", re.I)
+# The clause is about someone/something else: an organisation, its history, a
+# relative clause ("that has been working …"), or an age.
+_THIRD_PARTY = re.compile(
+    r"\b(?:organi[sz]ations?|ngos?|ingos?|agency|agencies|company|companies|firm|"
+    r"institution|institute|foundation|association|society|ministry|government|network|"
+    r"consortium|charity|cooperative|established|founded|operating|in\s+operation|"
+    r"since\s+its|existence)\b"
+    r"|\b(?:that|which)\s+(?:has|have|had)\b", re.I)
+_AGE_NEAR = re.compile(r"\b(?:aged?|years?\s*old|year-?old|born)\b", re.I)
 
-    Returns (max_qualified_years_or_None, evidence_snippet). A number such as an
-    age range, project duration, or beneficiary count can never become years of
-    experience — we only accept a "N years" match whose context has an experience
-    cue and no disqualifying cue. If nothing qualifies, returns (None, "").
+
+def _clause_before(text: str, start: int, limit: int = 140) -> str:
+    """Text from the last sentence/clause break before ``start``."""
+    window = text[max(0, start - limit):start]
+    cut = max(window.rfind(ch) for ch in ".;\n•▪")
+    return window[cut + 1:] if cut >= 0 else window
+
+
+def _personal_year_matches(text: str):
+    for pat in (_PERSONAL_YEARS, _EXPERIENCE_OF, _SPAN_YEARS):
+        for m in pat.finditer(text or ""):
+            val = int(m.group(1))
+            if val < 2 or val > 60:              # "1 year 11 months" is a job, not a career
+                continue
+            clause = _clause_before(text, m.start()) + text[m.start():m.end()]
+            if _THIRD_PARTY.search(clause):
+                continue
+            if pat is _SPAN_YEARS and not (
+                    _PERSONAL_CUE.search(text[max(0, m.start() - 60):m.end()])
+                    or re.match(r"\W{0,3}\s*i\s+(?:have|['’]ve|worked)\b", text[m.end():],
+                                re.I)):
+                continue
+            if _AGE_NEAR.search(text[max(0, m.start() - 22):m.end() + 22]):
+                continue
+            yield val, m
+
+
+def _experience_years(text: str) -> tuple[Optional[int], str]:
+    """Years of the candidate's OWN professional experience, or (None, "").
+
+    Accepts only an explicit statement bound to experience/expertise/career and
+    not about an organisation, a project or someone's age. Ambiguous text yields
+    None — no replacement value is ever guessed.
     """
     low = text or ""
     best: Optional[int] = None
     best_snip = ""
-    for m in _YEARS.finditer(low):
-        val = int(m.group(1))
-        if val <= 0 or val > 60:  # implausible as professional experience
-            continue
-        # Disqualifiers must be CLOSE to this number (age/duration/beneficiary bind
-        # tightly, e.g. "6 years old"); the experience cue may be a little further.
-        near = low[max(0, m.start() - 22): m.end() + 22]
-        wide = low[max(0, m.start() - 45): m.end() + 45]
-        if _EXP_DISQUALIFY.search(near) or _DATE_RANGE.search(near):
-            continue
-        if not _EXP_CUE.search(wide):
-            continue
+    for val, m in _personal_year_matches(low):
         if best is None or val > best:
             best = val
-            best_snip = wide.strip()
+            best_snip = low[max(0, m.start() - 45): m.end() + 45].strip()
     return best, best_snip
+
+
+def years_supported_by_snippet(value, snippet: str) -> bool:
+    """True if a stored evidence snippet still supports ``value`` under the v0.6.9
+    rule (used to re-check an existing index without re-parsing any CV)."""
+    if not isinstance(value, (int, float)) or not snippet:
+        return False
+    return any(v == int(value) for v, _m in _personal_year_matches(snippet))
+
+
+def revalidate_years(profile: dict) -> dict:
+    """Re-check a stored ``years_experience`` against its own evidence snippet.
+
+    Unsupported values become None with ``years_experience_status = UNVERIFIED``;
+    the rejected value and the snippet are kept for provenance. Idempotent; no CV
+    is re-parsed and no replacement value is ever guessed.
+    """
+    years = profile.get("years_experience")
+    if years is None:
+        return profile if "years_experience_status" in profile else \
+            {**profile, "years_experience_status": profile.get(
+                "years_experience_rejected") and "UNVERIFIED" or "NOT_STATED"}
+    ev = profile.get("evidence")
+    if not isinstance(ev, dict) or "years_experience" not in ev:
+        # not produced by the CV text parser (structured source): nothing to re-check.
+        # Nomination and eligibility already ignore years without evidence.
+        return {**profile, "years_experience_status": "NO_EVIDENCE"}
+    snippet = ev.get("years_experience") or ""
+    if years_supported_by_snippet(years, snippet):
+        return {**profile, "years_experience_status": "VERIFIED"}
+    return {**profile, "years_experience": None, "years_experience_status": "UNVERIFIED",
+            "years_experience_rejected": {
+                "value": years, "snippet": snippet,
+                "reason": "not clearly linked to the candidate's own professional experience"}}
 
 
 def normalize_cv(*, text: str, file_id: str, file_name: str, country: str = "",

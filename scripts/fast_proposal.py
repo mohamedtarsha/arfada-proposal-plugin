@@ -170,7 +170,10 @@ def cmd_status(args) -> int:
     extra = []
     reqs = (_read(run_dir, "requirements.json", {}) or {}).get("requirements", [])
     if reqs:
-        item_keys = sorted({e["item_key"] for e in build_submission_checklist(reqs)})
+        item_keys = {e["item_key"] for e in build_submission_checklist(reqs)}
+        # items the TOR lists under "the proposal should include" (proposal_format)
+        from engine.tor.submission_blockers import required_items
+        item_keys = sorted(item_keys | set(required_items(reqs)))
         pkg = check_submission_package(run_dir, item_keys=item_keys)
         for miss in pkg["missing"]:
             extra.append({"message": f"Package item missing: {miss}",

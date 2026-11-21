@@ -124,7 +124,21 @@ class FileStore:
     # --- assignment metadata -----------------------------------------------
 
     def assignment(self, aid: str) -> dict:
-        return {"project_title": "", "assignment_id": aid,
+        # v0.6.9: title / client / country / subnational location as STATED by the
+        # document (empty when the text does not support a value)
+        if not hasattr(self, "_detected"):
+            try:
+                from .tor_metadata import detect_metadata
+                self._detected = detect_metadata(self._blocks)
+            except Exception:
+                self._detected = {}
+        d = self._detected
+        return {"project_title": d.get("project_title", ""), "assignment_id": aid,
+                "client": d.get("client", ""), "country": d.get("country", ""),
+                "subnational_location": d.get("subnational_location", []),
+                "title_method": d.get("title_method", ""),
+                "client_method": d.get("client_method", ""),
+                "country_method": d.get("country_method", ""),
                 "file_name": self._path.name, "file_path": str(self._path)}
 
     # --- passthrough used by structuring / checks --------------------------

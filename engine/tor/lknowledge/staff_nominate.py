@@ -102,8 +102,8 @@ def tor_context(tor: Optional[dict], requirements: Optional[list], country: str 
                               + [str(r.get("text") or "") for r in requirements or []
                                  if isinstance(r, dict)]))
     themes = {t for t, pat in _THEMES.items() if re.search(pat, tor_text, re.I)}
-    place_text = " ".join([_mv(meta, k) for k in ("location", "geographic_scope", "area",
-                                                  "geography")])
+    place_text = " ".join([_mv(meta, k) for k in ("subnational_location", "location",
+                                                  "geographic_scope", "area", "geography")])
     title = _mv(meta, "assignment") or _mv(meta, "title")
     m = re.search(r"\bin\s+(.+)$", title)
     place_text += " " + (m.group(1) if m else "")

@@ -300,6 +300,14 @@ def analyze(tor_path: str | Path, output_root: str | Path | None = None) -> dict
             "page": f.page,
             "source_section": f.source_section_path,
         }
+        # v0.6.9: states / localities named with the assignment location
+        sub = (f.extras or {}).get("subnational_location") if f.field_key == "country" else None
+        if sub:
+            metadata["subnational_location"] = {
+                "value": ", ".join(sub), "values": list(sub),
+                "confidence": f.confidence, "method": f.method, "page": f.page,
+                "source_section": f.source_section_path,
+            }
 
     # --- assignment type inference (Phase 4) -------------------------------
     atype = infer_assignment_type(metadata, enriched_reqs, context_aware=True)
