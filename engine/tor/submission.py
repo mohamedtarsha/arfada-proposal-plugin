@@ -118,3 +118,58 @@ def build_submission_checklist(requirements: list[dict]) -> list[dict]:
             continue
         out.append(classify_submission_requirement(r))
     return out
+
+
+# ---------------------------------------------------------------------------
+# v0.6.12: submission requirement vs PHYSICAL annex
+# ---------------------------------------------------------------------------
+
+# items that are a separate file by nature
+PHYSICAL_KEYS = {"cv_annex", "previous_work", "detailed_budget", "registration"}
+# the TOR explicitly asks for a separate file / document / attachment
+_EXPLICIT_FILE = re.compile(
+    r"\b(?:attach(?:ed|ment)?s?|annex(?:ed)?|enclos(?:e|ed|ure)|separate\s+(?:file|document|"
+    r"annex|attachment|pdf)|copy\s+of|copies\s+of|scanned|certificates?|signed\s+(?:form|"
+    r"declaration|copy|letter)|as\s+a\s+(?:separate\s+)?(?:file|document|pdf))\b", re.I)
+# status / clarification items — never files
+STATUS_ITEM = re.compile(
+    r"\bdeadline\b|closing\s+date|no\s+later\s+than|\bsubmi\w+\s+(?:via|through|by|to|before|"
+    r"on\s+or\s+before)\b|submission\s+(?:platform|channel|e-?mail|address)|"
+    r"\b(?:late|incomplete)\s+(?:submissions?|proposals?)\b", re.I)
+
+
+def is_status_item(text: str) -> bool:
+    return bool(STATUS_ITEM.search(text or ""))
+
+
+def requires_physical_annex(entry: dict) -> bool:
+    """True when a checklist item needs its own file in the package."""
+    if entry.get("item_key") in PHYSICAL_KEYS:
+        return True
+    text = entry.get("text") or ""
+    if is_status_item(text):
+        return False
+    return bool(_EXPLICIT_FILE.search(text))
+
+
+def physical_annex_keys(requirements: list) -> list:
+    """Annex keys the package must physically contain (submission + proposal-format items).
+
+    A requirement such as a Risk Mitigation Plan is satisfied inside the technical
+    proposal unless the TOR explicitly asks for a separate file; deadline / channel
+    lines are status items. No generic 'other' annex is ever expected.
+    """
+    keys = []
+    for r in requirements or []:
+        if r.get("actor") == "CLIENT" or r.get("category") not in ("submission", "proposal_format"):
+            continue
+        e = classify_submission_requirement(r)
+        if e["obligation"] != MANDATORY or not requires_physical_annex(e):
+            continue
+        key = e["item_key"]
+        if key == "other":
+            slug = re.sub(r"[^a-z0-9]+", "_", e["item_label"].lower()).strip("_")[:40]
+            key = f"other:{slug}" if slug else ""
+        if key and key not in keys:
+            keys.append(key)
+    return keys

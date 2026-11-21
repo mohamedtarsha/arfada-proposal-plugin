@@ -416,8 +416,17 @@ def validate_candidate(packet: dict, candidate: dict) -> dict:
     verified_values = _verified_fact_values(packet.get("verified_arfada_facts", []))
     for m in _UNSUPPORTED_ARFADA.finditer(all_text):
         claim = m.group(0)
+        # v0.6.12 typed tokens: a duration / identifier / percentage / methodology count
+        # next to "ARFADA" is not an organisational claim; only portfolio metrics are
+        from .numeric_tokens import tokenize
+        # tokenize the rest of the sentence (the regex match may stop at "over 200")
+        _end = re.search(r"[.;!?](?!\d)|\n", all_text[m.end():])
+        sentence_rest = all_text[m.start(): m.end() + (_end.start() if _end else len(all_text))]
+        toks = tokenize(sentence_rest)
+        if toks and not any(t.kind == "PORTFOLIO_METRIC" for t in toks):
+            continue
         # extract the number in the claim (if any) and check it against verified facts
-        nums = re.findall(r"\d[\d,]*", claim)
+        nums = [t.raw for t in toks if t.kind == "PORTFOLIO_METRIC"] or re.findall(r"\d[\d,]*", claim)
         supported = False
         for n in nums:
             norm = n.replace(",", "")
@@ -464,6 +473,14 @@ def validate_candidate(packet: dict, candidate: dict) -> dict:
         try:
             from .claim_language import section_issues
             for issue in section_issues(candidate, claim_state, section_id=packet["section_id"]):
+                if issue.kind == "DURATION_WORDING":
+                    errors.append(f"DURATION_WORDING: {issue.detail}. Keep the TOR wording "
+                                  f"'{issue.replacement}'.")
+                    continue
+                if issue.kind == "STAFF_NAME_NOT_CANONICAL":
+                    errors.append(f"STAFF_NAME_NOT_CANONICAL: {issue.detail}. Use the full "
+                                  "canonical_name from the claim policy.")
+                    continue
                 if issue.kind == "PERSONNEL_UNVERIFIED":
                     errors.append(f"UNVERIFIED_PERSONNEL_CLAIM: {issue.detail} — "
                                   f"'{issue.sentence[:120]}'. State only CV-verified "

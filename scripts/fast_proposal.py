@@ -170,10 +170,12 @@ def cmd_status(args) -> int:
     extra = []
     reqs = (_read(run_dir, "requirements.json", {}) or {}).get("requirements", [])
     if reqs:
-        item_keys = {e["item_key"] for e in build_submission_checklist(reqs)}
-        # items the TOR lists under "the proposal should include" (proposal_format)
+        # v0.6.12: only items that need their OWN file (CVs, previous work, budget,
+        # registration, or an explicitly requested separate document) — never a
+        # generic "Annex: other" for content items, deadlines or channels
+        from engine.tor.submission import physical_annex_keys
         from engine.tor.submission_blockers import required_items
-        item_keys = sorted(item_keys | set(required_items(reqs)))
+        item_keys = sorted(set(physical_annex_keys(reqs)) | set(required_items(reqs)))
         pkg = check_submission_package(run_dir, item_keys=item_keys)
         for miss in pkg["missing"]:
             extra.append({"message": f"Package item missing: {miss}",

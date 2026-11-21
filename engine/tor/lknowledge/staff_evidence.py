@@ -42,7 +42,9 @@ FIELD_ROLE = re.compile(
 
 def _snippets(profile: dict) -> str:
     ev = profile.get("evidence") or {}
-    return " ".join(str(v) for v in ev.values()) if isinstance(ev, dict) else ""
+    base = " ".join(str(v) for v in ev.values()) if isinstance(ev, dict) else ""
+    # v0.6.12: CV-text role evidence read for shortlisted candidates
+    return " ".join([base] + list(profile.get("role_evidence") or []))
 
 
 def _folders(profile: dict) -> str:

@@ -51,7 +51,8 @@ def preexport_check(run_dir: Path) -> dict:
         _cs = build_claim_state(run_dir)
         live_claims = {"claims": {k: {"status": v.get("status")}
                                   for k, v in _cs.get("claims", {}).items()},
-                       "team": _cs.get("team", [])}
+                       "team": _cs.get("team", []),
+                       "tor_durations": _cs.get("tor_durations", [])}
     except Exception:
         live_claims = None
 

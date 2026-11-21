@@ -29,7 +29,9 @@ METRIC_NOUNS: dict[str, str] = {
                r"survey\s+respondents?\b|households?\s+(?:surveyed|interviewed)\b"),
 }
 
-_NUM = r"(\d{1,3}(?:,\d{3})+|\d+)"
+# v0.6.12: whole numbers only — "73,906" is one number; never a fragment of a
+# decimal ("247.5" is not 247 or 5)
+_NUM = r"(?<![\d.,])(\d{1,3}(?:,\d{3})+|\d+)(?![\d]|[.,]\d)"
 # words allowed between a number and its metric noun ("250 completed household
 # interviews"); connectives such as "of/with/per" break the binding.
 _FILLER = r"(?:(?!of\b|and\b|or\b|with\b|per\b|to\b|from\b|for\b|in\b|at\b|by\b|than\b)[a-z][\w-]*\s+){0,3}?"
@@ -80,6 +82,13 @@ def _household_survey_claims(sentence: str, section_id: str, exclude_values) -> 
             return      # the first part of "149 FHH + 99 MHH = 248"
         if check_population and _POPULATION_NEAR.search(
                 low[max(0, m.start() - 30):m.end() + 25]):
+            return
+        # v0.6.12: a baseline figure later in the sentence ("the baseline round, which
+        # interviewed 243 households") stays a reference value, never the current sample
+        head = low[max(0, m.start() - 90):m.start()]
+        b = head.rfind("baseline")
+        if b >= 0 and not re.search(r"propos|endline|end line|this evaluation|we will|our",
+                                    head[b:]):
             return
         out.append(Claim("survey", v, section_id, "prose", sentence.strip()[:120]))
 
@@ -293,3 +302,65 @@ def decision_targets(register: Optional[dict]) -> dict[str, int]:
         if metric and metric not in out:
             out[metric] = int(val)
     return out
+
+
+# ---------------------------------------------------------------------------
+# v0.6.12: sampling provenance — minimum → allowance → adjusted → proposed (rounded up)
+# ---------------------------------------------------------------------------
+
+_P_NUM = r"(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
+_P_MIN = re.compile(rf"\bminimum(?:\s+sample(?:\s+size)?)?(?:\s+(?:of|is|=|:|after[^,.;]{{0,40}}))?\s*"
+                    rf"{_P_NUM}|{_P_NUM}[ \t]+(?:\w+[ \t]+){{0,2}}?minimum\b", re.I)
+_P_ALLOW = re.compile(rf"{_P_NUM}\s*%\s*(?:\w+\s+){{0,3}}?(?:non-?response|reserve|allowance|"
+                      rf"contingency|attrition|buffer)|(?:non-?response|reserve|allowance|attrition|"
+                      rf"buffer)[^.;\d]{{0,40}}?{_P_NUM}\s*%", re.I)
+_P_ADJ = re.compile(rf"\b(?:adjusted|inflated|raw|gives?|giving|=|≈|to)\s+(?:a\s+)?(?:\w+\s+){{0,2}}?"
+                    rf"(\d+\.\d+)\b", re.I)
+_P_PROPOSED = re.compile(rf"\b(?:propos\w*|planned|final|target)\s+(?:\w+\s+){{0,3}}?(?:sample\s+)?"
+                         rf"(?:of\s+|is\s+|=\s*|:\s*)?{_P_NUM}\b|\brounded\s+up\s+to\s+{_P_NUM}\b", re.I)
+_P_BASELINE = re.compile(rf"\bbaseline\s+(?:sample\s+)?(?:\w+\s+){{0,3}}?(?:of\s+|was\s+|=\s*|:\s*)?"
+                         rf"{_P_NUM}\b", re.I)
+_P_ROUND_UP = re.compile(r"\bround(?:ed|ing)?\s+up(?:ward)?|\bupward\b|\bceil", re.I)
+
+
+def _first(rx, text):
+    """First matching value that is not a calendar year ("the July 2026 baseline")."""
+    for m in rx.finditer(text):
+        g = next((x for x in m.groups() if x), None)
+        if not g:
+            continue
+        v = float(g.replace(",", ""))
+        if v.is_integer() and 1900 <= v <= 2100:
+            continue
+        return v
+    return None
+
+
+def sampling_provenance(text: str) -> dict:
+    """Parse and check minimum → allowance → adjusted → proposed (and the baseline).
+
+    Accepts e.g. minimum 225, ≈10% non-response, adjusted 247.5, proposed 250
+    (rounded up). The baseline sample is recorded separately and never compared
+    with the proposed sample as if it were the same quantity.
+    """
+    t = text or ""
+    prov = {"minimum": _first(_P_MIN, t), "allowance_pct": _first(_P_ALLOW, t),
+            "adjusted": _first(_P_ADJ, t), "proposed": _first(_P_PROPOSED, t),
+            "baseline": _first(_P_BASELINE, t),
+            "rounding": "upward" if _P_ROUND_UP.search(t) else ""}
+    issues = []
+    mn, pct, adj, prop = prov["minimum"], prov["allowance_pct"], prov["adjusted"], prov["proposed"]
+    if mn and prop and prop < mn:
+        issues.append(f"proposed sample {prop:g} is below the minimum {mn:g}")
+    if mn and pct and adj and abs(mn * (1 + pct / 100.0) - adj) > max(1.0, 0.01 * adj):
+        issues.append(f"adjusted value {adj:g} does not equal {mn:g} × (1 + {pct:g}%)")
+    if adj and prop and prop < adj:
+        issues.append(f"proposed sample {prop:g} is below the adjusted value {adj:g}")
+    if mn and pct and prop and not adj:
+        target = mn * (1 + pct / 100.0)
+        if prop + 0.5 < target:
+            issues.append(f"proposed sample {prop:g} is below {mn:g} + {pct:g}% ({target:g})")
+    prov["consistent"] = not issues
+    prov["issues"] = issues
+    prov["found"] = any(prov[k] is not None for k in ("minimum", "adjusted", "proposed"))
+    return prov

@@ -83,19 +83,17 @@ def budget_state(run_dir: Path) -> tuple[bool, str]:
 
 
 def previous_work_state(run_dir: Path) -> tuple[bool, str]:
-    rec = _load(run_dir / "previous_work.json")
-    files = _files(run_dir, "previous_work")
-    if rec:
-        f = rec.get("file")
-        present = bool(files) or bool(f and Path(f).exists())
-        if not rec.get("clearance_confirmed"):
-            return False, "sharing clearance not confirmed"
-        if not present:
-            return False, "registered file not found in the package"
-        return True, "cleared and annexed"
-    if files:
-        return False, "file present but not registered / clearance not confirmed"
-    return False, "no example selected or cleared for sharing"
+    """Resolved only when a report is SELECTED and explicit SHARING CLEARANCE exists
+    (v0.6.12: a selection, or ARFADA authorship, is never clearance)."""
+    from .previous_work_state import previous_work_states, VERIFIED
+    st = previous_work_states(run_dir)
+    sel, cl = st["selected"], st["clearance"]
+    if sel["status"] != VERIFIED:
+        return False, ("no example selected or cleared for sharing"
+                       if sel["status"] == "MISSING" else sel["detail"])
+    if cl["status"] != VERIFIED:
+        return False, f"sharing clearance not confirmed for {sel.get('file', 'the selected report')}"
+    return True, "selected, cleared and annexed"
 
 
 def registration_state(run_dir: Path) -> tuple[bool, str]:
@@ -124,7 +122,8 @@ def pending_submission_blockers(run_dir: str | Path, requirements: list) -> list
                         "requirement_id": items["previous_work"]["requirement_id"],
                         "message": f"Previous-work example pending — {why}",
                         "recommended_action": "Choose the report and confirm ARFADA may share it "
-                                              "(previous_work.py register … --confirm-clearance)."})
+                                              "(previous_work.py clear <run_dir> --note "
+                                              "\"<explicit permission words>\")."})
     if "registration" in items:
         ok, why = registration_state(run_dir)
         if not ok:

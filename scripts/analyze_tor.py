@@ -433,6 +433,11 @@ def analyze(tor_path: str | Path, output_root: str | Path | None = None) -> dict
     _sub_cue = _re.compile(r"\b(?:submi\w*|send|sent|apply|application|deadline|closing\s+date)\b", _re.I)
     _sub_val = _re.compile(r"@|https?://|www\.|\[|deadline|\d{1,2}[-\s/.](?:[A-Za-z]{3,9}|\d{1,2})"
                            r"[-\s/.,]+\d{2,4}|\b(?:via|through|portal|platform|e-?mail)\b", _re.I)
+    # v0.6.12: duration wording exactly as the TOR writes it ("30 days" vs "30 working days")
+    _dur = _re.compile(r"\b(\d{1,3})\s*(working|calendar|business|consecutive)?\s*(days?|weeks?|months?)\b", _re.I)
+    result["duration_mentions"] = sorted({
+        f"{m.group(1)}|{(m.group(2) or '').lower()}|{m.group(3).lower().rstrip('s')}"
+        for b in all_blocks for m in _dur.finditer(b.get("plain_text") or "")})
     result["submission_instructions"] = [
         (b.get("plain_text") or "")[:400] for b in all_blocks
         if _sub_cue.search(b.get("plain_text") or "") and _sub_val.search(b.get("plain_text") or "")

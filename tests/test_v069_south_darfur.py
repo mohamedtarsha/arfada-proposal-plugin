@@ -168,8 +168,11 @@ class TestSubmissionBlockers(unittest.TestCase):
         f = d / "annexes" / "previous_work" / "report.pdf"
         f.parent.mkdir(parents=True)
         f.write_bytes(b"%PDF-1.4")
+        # v0.6.12: clearance needs explicit permission wording (a flag alone is not enough)
         (d / "previous_work.json").write_text(json.dumps(
-            {"file": str(f), "clearance_confirmed": True}), encoding="utf-8")
+            {"file": str(f), "selected": True,
+             "clearance": {"status": "VERIFIED", "evidence": "IRC permission confirmed"}}),
+            encoding="utf-8")
         # v0.6.10: required registration evidence is tracked too
         reg = d / "annexes" / "registration" / "certificate.pdf"
         reg.parent.mkdir(parents=True)

@@ -6,6 +6,47 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.6.12] — 2026-11-21
+
+### Fixed — confirmed v0.6.11 South Darfur output
+- **Previous-work selection ≠ sharing clearance** (`engine/tor/previous_work_state.py`).
+  `previous_work.json` keeps PREVIOUS_WORK_SELECTED and PREVIOUS_WORK_CLEARANCE apart.
+  `register` records the selection only; clearance needs explicit permission wording
+  (`previous_work.py clear --note …`). ARFADA authorship, a bare `--confirm-clearance`
+  or the legacy `clearance_confirmed` flag never clear a report. Until cleared,
+  PREVIOUS_WORK_CLEARANCE is one canonical final blocker, and "accompanies this
+  proposal", "as a separate annex", "attached", "enclosed" … are contradictions
+  (rewritten to safe wording on export); naming the proposed report stays allowed.
+- **Stable staff identity** (`lknowledge/staff_identity.py`): `staff_profile_id` is the
+  identity everywhere (ranking, team, facts, packets, validation, rendering);
+  `canonical_name` is the full name (VERIFIED from a promoted CV fact, else PROVISIONAL
+  from a person-named folder or the cleaned file name). People match only on the full
+  name in order or a shared person folder — never shared tokens (Ahmed / Mohamed /
+  Ishag …). Initials forms are flagged (STAFF_IDENTITY) and rendered in full.
+  `promote_staff_fact` accepts `staff_profile_id`.
+- **Submission requirement vs physical annex** (`engine/tor/submission.py`): only CVs,
+  previous work, budget, registration or an explicitly requested separate file are
+  package files. No generic `Annex: other`; deadline / channel lines are status items;
+  a content item (e.g. Risk Mitigation Plan) is satisfied inside the technical
+  proposal, otherwise a draft-coverage warning — never a package blocker.
+- **Numeric QA tokenization** (`engine/tor/numeric_tokens.py`): typed tokens
+  (PERCENTAGE, YEAR, DURATION, IDENTIFIER, MONEY, PORTFOLIO_METRIC, HISTORICAL_STAT,
+  METHODOLOGY_COUNT). "73,906" is one number, "CFGB 3350" an identifier, "30 days" a
+  duration; only portfolio metrics are checked against verified ARFADA facts. Counts
+  never split decimals ("247.5"). Sampling provenance (minimum → allowance → adjusted
+  → proposed, rounding upward) is parsed and checked; the baseline sample stays
+  separate. The TOR's duration wording is kept ("30 days" is not rewritten to
+  "30 working days"; DURATION_WORDING finding + export rewrite).
+- **Role-specific staff ranking** (`lknowledge/staff_role_fit.py`): `role_fit_score` per
+  TOR role (Team Leader, FSL, Gender/Protection, Data Analyst, Field Coordinator) from
+  evidence only — CV-text snippets of the TOR's own candidate pool (cached, never full
+  CV text), ARFADA filing at half weight, role titles only for "held this role".
+  One distinct person per role, Team Leader question on role fit; SUPPORTING_DOCUMENT
+  stays ineligible. Without TOR team roles the ranking is unchanged.
+- Regression tests: `tests/test_v0612_regression.py` (+ updated v0.6.9 clearance test).
+
+---
+
 ## [0.6.11] — 2026-11-21
 
 ### Production hardening — no claim may contradict the evidence or package state

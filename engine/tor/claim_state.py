@@ -39,6 +39,9 @@ SAFE_WORDING = {
                           "are confirmed.",
     "previous_work_sample": "An example of previous work will be included in the final "
                             "submission package once sharing clearance is confirmed.",
+    "previous_work_clearance": "The proposed example of previous work will be included in the "
+                               "final submission package once permission to share it is "
+                               "confirmed.",
     "team_cv_package": "CVs of the proposed team members will be included in the final "
                        "submission package.",
     "team_availability": "Availability of the proposed experts will be confirmed prior to final "
@@ -213,12 +216,23 @@ def build_claim_state(run_dir: str | Path, *, knowledge=None,
         claims["financial_proposal"] = claim(VERIFIED if ok else (PROVISIONAL if partial else MISSING), why)
     else:
         claims["financial_proposal"] = claim(VERIFIED if ok else NOT_APPLICABLE, why, required=False)
-    # previous-work sample
+    # previous-work sample: SELECTION and SHARING CLEARANCE are independent (v0.6.12)
+    from .previous_work_state import previous_work_states
+    pw = previous_work_states(run_dir)
     ok, why = previous_work_state(run_dir)
-    reg = _load(run_dir / "previous_work.json")
-    if "previous_work" in required:
+    req_pw = "previous_work" in required
+    claims["previous_work_selected"] = claim(
+        pw["selected"]["status"] if (req_pw or pw["selected"]["status"] == VERIFIED)
+        else NOT_APPLICABLE, pw["selected"]["detail"], required=req_pw,
+        file=pw["selected"].get("file", ""), label=pw["selected"].get("label", ""))
+    claims["previous_work_clearance"] = claim(
+        pw["clearance"]["status"] if (req_pw or pw["selected"]["status"] == VERIFIED)
+        else NOT_APPLICABLE, pw["clearance"]["detail"], required=req_pw,
+        evidence=pw["clearance"].get("evidence", ""))
+    if req_pw:
         claims["previous_work_sample"] = claim(
-            VERIFIED if ok else (PROVISIONAL if reg else MISSING), why)
+            VERIFIED if ok else (PROVISIONAL if pw["selected"]["status"] == VERIFIED else MISSING),
+            why)
     else:
         claims["previous_work_sample"] = claim(VERIFIED if ok else NOT_APPLICABLE, why,
                                                required=False)
@@ -264,9 +278,14 @@ def build_claim_state(run_dir: str | Path, *, knowledge=None,
         pool = list(getattr(knowledge, "_live_staff", []) or [])
         by_id = {p.get("staff_id"): p for p in pool}
         from .lknowledge.staff_evidence import profile_claims, field_roster_readiness
+        from .lknowledge.staff_identity import canonical_identity
         for m in team:
-            p = by_id.get(m.get("staff_id"), {**m})
-            team_claims.append({"staff_id": m.get("staff_id"), "name": m.get("name"),
+            sid = m.get("staff_profile_id") or m.get("staff_id")
+            p = by_id.get(sid, {**m})
+            ident = canonical_identity(p, staff_facts=facts)
+            team_claims.append({"staff_id": sid, **ident,
+                                "name": ident["canonical_name"] or m.get("name"),
+                                "role": m.get("role", ""),
                                 "claims": profile_claims(p, places=places, staff_facts=facts)})
         if country:
             r = field_roster_readiness(pool, country=country, places=places)
@@ -281,6 +300,8 @@ def build_claim_state(run_dir: str | Path, *, knowledge=None,
             "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
             "claims": claims, "team": team_claims,
             "source_inconsistencies": inconsist,
+            # v0.6.12: duration wording exactly as the TOR writes it
+            "tor_durations": list(tor.get("duration_mentions") or []),
             "safe_wording": SAFE_WORDING}
 
 
@@ -305,12 +326,19 @@ def generation_policy(state: dict) -> dict:
         verified = sorted(k for k, v in (m.get("claims") or {}).items() if v.get("status") == VERIFIED)
         unverified = sorted(k for k, v in (m.get("claims") or {}).items()
                             if v.get("status") in (UNVERIFIED, MISSING))
-        team.append({"name": m.get("name"), "verified_attributes": verified,
-                     "do_not_claim": unverified})
+        team.append({"staff_profile_id": m.get("staff_profile_id") or m.get("staff_id"),
+                     "canonical_name": m.get("canonical_name") or m.get("name"),
+                     "canonical_name_status": m.get("canonical_name_status", ""),
+                     "role": m.get("role", ""),
+                     "name": m.get("canonical_name") or m.get("name"),
+                     "verified_attributes": verified, "do_not_claim": unverified})
     return {"instruction": ("Write unresolved facts in provisional / future language only. "
                             "Never describe an item below as attached, provided, included, "
                             "confirmed, available, registered or submitted. Personnel: state "
-                            "only VERIFIED attributes as qualifications."),
+                            "only VERIFIED attributes as qualifications, and always write each "
+                            "member's full canonical_name (never initials); identify people "
+                            "by staff_profile_id. If canonical_name_status is not VERIFIED, read "
+                            "the CV and promote a full_name staff fact (staff_profile_id=…)."),
             "unresolved_claims": rules, "team": team,
             "source_inconsistencies": state.get("source_inconsistencies", []),
             "source_inconsistency_wording": SAFE_WORDING["source_inconsistency"]

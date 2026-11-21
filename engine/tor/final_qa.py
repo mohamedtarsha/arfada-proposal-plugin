@@ -566,14 +566,21 @@ def _check_arfada_facts(ctx) -> list[Finding]:
         has_placeholder = any(b.get("type") == "evidence_placeholder" for b in cand.get("blocks", []))
         if "NEEDS_ARFADA_EVIDENCE" in text or has_placeholder:
             continue
-        for m in re.finditer(r"ARFADA\b[^.]{0,80}", text):
-            frag = m.group(0)
-            nums = re.findall(r"\b(\d{2,6})\b", frag)
-            for n in nums:
-                if n not in verified:
+        # v0.6.12 typed tokens: "73,906" is one number; identifiers ("CFGB 3350"),
+        # durations ("30 days"), percentages, years and this proposal's methodology
+        # counts are not ARFADA organisational metrics and are never checked here
+        from .numeric_tokens import tokenize
+        for sent in re.findall(r"(?:[^.;!?\n]|\.(?=\d))+[.;!?]?", text):
+            if not re.search(r"\bARFADA\b", sent):
+                continue
+            for tok in tokenize(sent):
+                if tok.kind != "PORTFOLIO_METRIC":
+                    continue
+                if str(tok.int_value) not in verified:
                     out.append(Finding("ARFADA_FACT", ERROR, "unsupported_fact",
-                                       f"Unsupported ARFADA number '{n}' not in the knowledge snapshot",
-                                       evidence=frag[:90], section_id=sid,
+                                       f"Unsupported ARFADA number '{tok.raw}' not in the "
+                                       "knowledge snapshot",
+                                       evidence=sent.strip()[:120], section_id=sid,
                                        recommended_action="Cite a verified fact_id or use NEEDS_ARFADA_EVIDENCE."))
     return out
 
@@ -637,6 +644,19 @@ def _check_contradictions(ctx) -> list[Finding]:
                                evidence="; ".join(f"{c.section_id}: {c.value}"
                                                   for c in items)[:200],
                                recommended_action="Align all sections to the approved count."))
+    # v0.6.12 sampling provenance: minimum → allowance → adjusted → proposed (rounded up);
+    # the baseline sample is recorded separately and never treated as a contradiction
+    from .numeric_claims import sampling_provenance, is_historical_section
+    current_text = "\n".join(_section_text(c) for sid, c in ctx["gen_sections"].items()
+                             if not is_historical_section(sid))
+    prov = sampling_provenance(current_text)
+    ctx["sampling_provenance"] = prov
+    if prov["found"] and not prov["consistent"]:
+        out.append(Finding("SAMPLING_PROVENANCE", WARNING, "sampling_arithmetic",
+                           "Sample-size derivation does not reconcile: " + "; ".join(prov["issues"]),
+                           blocks_client=False,
+                           recommended_action="State minimum, allowance, adjusted value and the "
+                                              "rounded-up proposed sample consistently."))
     # entity contradiction: client/country
     meta = ctx["tor"].get("metadata", {})
     for key, label in (("client", "client"), ("country", "country")):
@@ -808,13 +828,38 @@ def _check_submission(ctx) -> list[Finding]:
                 if r.get("category") == "submission" and r.get("actor") != "CLIENT"]
     if not sub_reqs:
         return out
+    from .submission import is_status_item, requires_physical_annex
     addressed = _addressed_requirement_ids(ctx)
+    proposal_text = _all_generated_text(ctx).lower()
     for r in sub_reqs:
         if r["req_id"] in addressed:
             continue
         entry = classify_submission_requirement(r)
         item = entry["item_label"]
         obligation = entry["obligation"]
+        # v0.6.12: deadline / channel lines are status items (claim-state blockers),
+        # and a content item (e.g. "Risk Mitigation Plan") is satisfied when the
+        # technical proposal covers it — only physical annexes stay package items
+        if is_status_item(entry["text"]):
+            continue
+        if not requires_physical_annex(entry):
+            # a content item is answered by the technical proposal itself: satisfied if
+            # the proposal covers it by name ("Work plan / timeline" → either variant)
+            variants = [re.sub(r"[…\.]+$", "", v).strip().lower()
+                        for v in re.split(r"\s*/\s*", item)]
+            if any(len(v.split()) >= 2 and v in proposal_text for v in variants) or \
+                    any(len(v.split()) == 1 and len(v) > 4 and re.search(rf"\b{re.escape(v)}\b",
+                                                                        proposal_text)
+                        for v in variants):
+                continue
+            if obligation == MANDATORY:
+                # not a missing package file: a draft-coverage gap (never Annex: other)
+                out.append(Finding("SUBMISSION", WARNING, "content_item_not_addressed",
+                                   f"TOR content item not yet covered in the proposal: {item}",
+                                   evidence=entry["text"][:140], section_id="SUBMISSION",
+                                   requirement_id=r["req_id"], blocks_client=False,
+                                   recommended_action=f"Cover '{item}' in the technical proposal."))
+                continue
         if obligation == MANDATORY:
             out.append(Finding("SUBMISSION", CRITICAL, "mandatory_submission_missing",
                                f"Mandatory submission item missing: {item}",
@@ -1258,6 +1303,20 @@ def _check_claim_consistency(ctx) -> list[Finding]:
         for issue in section_issues(cand, state, section_id=sid):
             if issue.claim == "field_roster":
                 continue                         # reported by the semantic check
+            if issue.kind == "DURATION_WORDING":
+                out.append(Finding("SOURCE_WORDING", WARNING, "duration_wording",
+                                   f"Duration reworded: {issue.detail}",
+                                   evidence=issue.sentence[:160], section_id=sid,
+                                   blocks_client=False,
+                                   recommended_action=f"Keep the TOR wording '{issue.replacement}'."))
+                continue
+            if issue.kind == "STAFF_NAME_NOT_CANONICAL":
+                out.append(Finding("STAFF_IDENTITY", ERROR, "name_not_canonical",
+                                   f"Team member not named in full: {issue.detail}",
+                                   evidence=issue.sentence[:160], section_id=sid,
+                                   recommended_action=f"Use the full canonical name "
+                                                      f"'{issue.replacement}'."))
+                continue
             if issue.kind == "PERSONNEL_UNVERIFIED":
                 out.append(Finding("PERSONNEL_EVIDENCE", ERROR, "unverified_qualification",
                                    f"{issue.detail} — stated as a team qualification",

@@ -145,6 +145,7 @@ def main(argv=None) -> int:
             "claims": {k: {"status": v.get("status"), "detail": v.get("detail", "")}
                        for k, v in _cs.get("claims", {}).items()},
             "team": _cs.get("team", []),
+            "tor_durations": _cs.get("tor_durations", []),
         }
         packet["claim_policy"] = generation_policy(_cs)
     except Exception:
