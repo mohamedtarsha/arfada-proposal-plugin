@@ -225,15 +225,24 @@ def extract_fields(store, aid: str) -> list[TORField]:
         found_keys.add(fkey)
 
     # --- metadata-backed fields ---
+    # detected-from-document values (v0.6.9) carry their detection method;
+    # a label ("Client: …", "Location: …") is HIGH, running text MEDIUM
+    def _conf(method_key, default):
+        m = meta.get(method_key)
+        return ("DOC_" + m, "HIGH" if m == "LABEL" else "MEDIUM") if m else ("METADATA", default)
+
     if meta.get("client"):
+        method, conf = _conf("client_method", "HIGH")
         add("client", meta["client"], docs[0]["document_id"] if docs else "", None, "", None, None, None,
-            "METADATA", "HIGH")
+            method, conf)
     if meta.get("country"):
+        method, conf = _conf("country_method", "HIGH")
         add("country", meta["country"], docs[0]["document_id"] if docs else "", None, "", None, None, None,
-            "METADATA", "HIGH")
+            method, conf, {"subnational_location": list(meta.get("subnational_location") or [])})
     if meta.get("project_title"):
+        method, conf = _conf("title_method", "MEDIUM")
         add("assignment", meta["project_title"], docs[0]["document_id"] if docs else "", None, "",
-            None, None, None, "METADATA", "MEDIUM")
+            None, None, None, method, conf)
 
     # --- structural: TOR sections -> fields ---
     all_blocks_text = []

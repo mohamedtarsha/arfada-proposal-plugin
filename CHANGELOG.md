@@ -6,6 +6,37 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.6.9] — 2026-11-21
+
+### Fixed — four issues from the fresh South Darfur v0.6.8 Fast Mode test
+- **TOR metadata from the document** (`engine/tor/tor_metadata.py`). File-based TORs
+  had no title, client or country. The title now comes from an explicit title label or
+  the first-page assignment heading; the client from explicit commissioning wording
+  ("ZOA is seeking …", "commissioned by …", "Client: …"; a donor is never the client);
+  the country from the assignment location (location labels, the title, "in …,
+  Sudan"); and `subnational_location` from the named states / localities. Values the
+  text does not state stay empty. Team ranking and experience retrieval then use the
+  extracted country and client; tracker rows coded EVALUATION whose name says
+  endline / final evaluation now match an ENDLINE TOR.
+- **Submission blockers** (`engine/tor/submission_blockers.py`). A TOR-required
+  financial proposal / detailed budget without a reconciled budget, and a required
+  previous-work example without a cleared, annexed file, are FINAL_SUBMISSION_BLOCKER
+  items in the two-status report and `fast_proposal.py status` (also when the TOR lists
+  them under "the proposal must include"). They never block the draft.
+  "Examples of previous …" is now recognised as the previous-work item.
+- **Household survey count** in numeric QA: "248 households", "248 HH", "household
+  survey of 248", "survey sample of 248", "149 + 99 = 248" and "Proposed sample | 248"
+  rows, in survey context only; baseline, caseload, indicator-target, historical and
+  portfolio numbers stay excluded, and sum parts are never totals.
+- **years_experience** only when bound to the candidate's own experience; organisation
+  history, project durations, ages and firm tenure yield null. Existing index values
+  are re-checked against their stored evidence snippet (no CV re-parse): unsupported
+  values become null with `years_experience_status = UNVERIFIED`, and the rejected
+  value is kept for provenance.
+- Regression tests: `tests/test_v069_south_darfur.py` (+ `tests/fixtures/south_darfur_tor.py`).
+
+---
+
 ## [0.6.8] — 2026-11-21
 
 ### Fixed — three issues from the first real Fast Mode run (South Darfur)

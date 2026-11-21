@@ -33,7 +33,23 @@ def two_status_report(run_dir: str | Path, *, extra_submission_gaps: list = None
     """Return both statuses + the blocker buckets + internal gaps text."""
     run_dir = Path(run_dir)
     qa = run_final_qa(run_dir)
-    buckets = classify_blockers(qa, extra_submission_gaps=extra_submission_gaps)
+    # TOR-required budget / previous-work items that are still unresolved block the
+    # FINAL submission (never the draft) — v0.6.9
+    from .submission_blockers import pending_submission_blockers
+    try:
+        import json as _json
+        reqs = _json.loads((run_dir / "requirements.json").read_text(encoding="utf-8")
+                           ).get("requirements", [])
+    except Exception:
+        reqs = []
+    pending = pending_submission_blockers(run_dir, reqs)
+    keys = {p["item_key"] for p in pending}
+    _labels = {"detailed_budget": "Financial offer / detailed budget",
+               "previous_work": "Previous-work example"}
+    extra = [g for g in (extra_submission_gaps or [])
+             if not any(_labels[k] in str(g.get("message", "") if isinstance(g, dict) else g)
+                        for k in keys)]
+    buckets = classify_blockers(qa, extra_submission_gaps=extra + pending)
 
     draft_blockers = buckets[DRAFT_BLOCKER]
     final_blockers = buckets[FINAL_SUBMISSION_BLOCKER]

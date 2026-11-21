@@ -122,8 +122,9 @@ class TestScanAndRetrieval(unittest.TestCase):
     def test_unchanged_rescan_reattributes_without_reparse(self):
         """A stale (old-rule) cached profile is corrected on rescan, not re-parsed."""
         from engine.tor.lknowledge.scan import scan_staff
+        # marker: survives only if not re-parsed (roles; years are re-checked in v0.6.9)
         stale = [{**p, "country": Path(p["source_rel_path"]).parent.name,
-                  "years_experience": 99}  # marker: survives only if not re-parsed
+                  "roles": ["Marker Role"]}
                  for p in self.profiles]
         stale = [{k: v for k, v in p.items()
                   if k not in ("country_pool", "country_status", "source_country_folder")}
@@ -134,7 +135,7 @@ class TestScanAndRetrieval(unittest.TestCase):
         self.assertEqual(report["staff"]["unchanged"], len(_LAYOUT))
         self.assertEqual(report["staff"]["added"], 0)
         for p in self.cache.staff()["profiles"]:
-            self.assertEqual(p["years_experience"], 99)  # cached facts kept
+            self.assertEqual(p["roles"], ["Marker Role"])  # cached facts kept
         got = {p["source_rel_path"].replace("\\", "/"): p["country"]
                for p in self.cache.staff()["profiles"]}
         self.assertEqual(got["Sudan/Senior Evaluation Expert/Ahmed/cv.docx"], "Sudan")
