@@ -420,6 +420,24 @@ def analyze(tor_path: str | Path, output_root: str | Path | None = None) -> dict
         "output_dir": str(out_dir),
     }
 
+    # --- TOR source-inconsistency register (v0.6.11): logged, never corrected ---
+    try:
+        from engine.tor.source_consistency import scan_blocks, SOURCE_FILE
+        inconsistencies = scan_blocks(all_blocks)
+    except Exception:
+        inconsistencies, SOURCE_FILE = [], "source_inconsistencies.json"
+    result["source_inconsistencies"] = len(inconsistencies)
+    _write_json(out_dir / SOURCE_FILE, {"run_id": run_id, "items": inconsistencies})
+    # submission instructions as stated (channel / deadline), for the claim state
+    import re as _re
+    _sub_cue = _re.compile(r"\b(?:submi\w*|send|sent|apply|application|deadline|closing\s+date)\b", _re.I)
+    _sub_val = _re.compile(r"@|https?://|www\.|\[|deadline|\d{1,2}[-\s/.](?:[A-Za-z]{3,9}|\d{1,2})"
+                           r"[-\s/.,]+\d{2,4}|\b(?:via|through|portal|platform|e-?mail)\b", _re.I)
+    result["submission_instructions"] = [
+        (b.get("plain_text") or "")[:400] for b in all_blocks
+        if _sub_cue.search(b.get("plain_text") or "") and _sub_val.search(b.get("plain_text") or "")
+    ][:12]
+
     # --- write artifacts ---------------------------------------------------
     _write_json(out_dir / "tor_analysis.json", result)
     _write_json(out_dir / "requirements.json", {

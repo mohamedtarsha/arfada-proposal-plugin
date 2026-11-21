@@ -135,6 +135,21 @@ def main(argv=None) -> int:
         historical_exemplars=historical_exemplars,
     )
 
+    # v0.6.11 claim gating: every unresolved fact (package items, availability,
+    # submission channel, personnel attributes, field roster, TOR inconsistencies)
+    # is in the packet with the wording the writer must use instead
+    try:
+        from engine.tor.claim_state import write_claim_state, generation_policy
+        _cs = write_claim_state(run_dir, knowledge=kb)
+        packet["claim_state"] = {
+            "claims": {k: {"status": v.get("status"), "detail": v.get("detail", "")}
+                       for k, v in _cs.get("claims", {}).items()},
+            "team": _cs.get("team", []),
+        }
+        packet["claim_policy"] = generation_policy(_cs)
+    except Exception:
+        pass
+
     packets_dir = run_dir / "generation_packets"
     packets_dir.mkdir(exist_ok=True)
     atomic_write_json(packets_dir / f"{section_id}.json", packet)

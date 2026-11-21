@@ -802,6 +802,14 @@ packet's `output_contract`. Produce a JSON object:
 ```
 
 Rules you MUST follow when writing:
+- Follow `claim_policy` (v0.6.11): every item in `unresolved_claims` (registration,
+  financial proposal, previous-work sample, CVs, team availability, submission
+  channel, deadline, field roster) is written ONLY in its `use_wording` / future
+  form — never "attached", "provided", "included", "confirmed", "available",
+  "registered" or "submitted through the channel specified". For named team members
+  state only `verified_attributes` as qualifications. Reproduce TOR figures listed in
+  `source_inconsistencies` unchanged and use `source_inconsistency_wording`. The
+  validator rejects a contradiction (`CLAIM_CONTRADICTION` / `UNVERIFIED_PERSONNEL_CLAIM`).
 - Every mandatory slot in the packet needs a ledger entry with real block_ids.
 - Use `applied_decisions` values EXACTLY (e.g. if KII count resolved to 35, write 35 — never 30 or "approximately 35").
 - For DEFERRED decisions, state confirmation at inception; do NOT invent a value.

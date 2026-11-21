@@ -243,6 +243,50 @@ def render_docx(
     assignment_label = blueprint.get("assignment_type_label") or at.get("label", "")
     date = (tor.get("analyzed_at", "") or "")[:10]
 
+    # --- final-language sanitizer (v0.6.11): client-style outputs never state an
+    # unresolved fact as complete. Deterministic rewrites are applied; anything left
+    # blocks a client export (the working draft still renders and reports it).
+    sanitized: dict = {}
+    claim_changes: list = []
+    claim_residual: list = []
+    if not internal:
+        import json as _json
+        from .claim_language import sanitize_candidate, rewrite_impact, _CONTRIBUTION_ONLY
+        try:
+            from .claim_state import build_claim_state
+            _state = build_claim_state(run_dir)
+        except Exception:
+            _state = {}
+        _cands = {}
+        for sec in blueprint["sections"]:
+            p = sections_dir / f"{sec['section_id']}.json"
+            if status_doc["sections"].get(sec["section_id"], {}).get("status") == "READY" and p.exists():
+                _cands[sec["section_id"]] = _json.loads(p.read_text(encoding="utf-8"))
+        from .final_qa import _section_text
+        _context = "\n".join(_section_text(c) for c in _cands.values())
+        for sid, cand in _cands.items():
+            new, ch, res = sanitize_candidate(cand, _state, section_id=sid,
+                                              contribution_context=_context)
+            sanitized[sid] = new
+            claim_changes += ch
+            claim_residual += res
+        if _CONTRIBUTION_ONLY.search(_context):
+            for name in ("assignment_label", "title"):
+                val = assignment_label if name == "assignment_label" else title
+                fixed = rewrite_impact(val)
+                if fixed != val:
+                    claim_changes.append({"kind": "SEMANTIC_IMPACT_VS_CONTRIBUTION",
+                                          "claim": name, "sentence": val, "replacement": fixed,
+                                          "section_id": "COVER"})
+                    if name == "assignment_label":
+                        assignment_label = fixed
+                    else:
+                        title = fixed
+        if claim_residual and not is_draft:
+            raise ValueError("CLAIM_GATE: unsupported definitive claim(s) remain — "
+                             + "; ".join(f"[{r['section_id']}] {r['claim']}: {r['sentence'][:80]}"
+                                         for r in claim_residual[:5]))
+
     doc = Document()
     _ensure_styles(doc)
 
@@ -274,7 +318,7 @@ def render_docx(
             if not cand_path.exists():
                 continue
             import json as _json
-            candidate = _json.loads(cand_path.read_text(encoding="utf-8"))
+            candidate = sanitized.get(sid) or _json.loads(cand_path.read_text(encoding="utf-8"))
             _render_section(doc, candidate, sec["title"], internal=internal)
             headings += 1
             for b in candidate.get("blocks", []):
@@ -322,6 +366,8 @@ def render_docx(
         "tables": tables,
         "headings": headings,
         "lists": lists,
+        "claim_rewrites": claim_changes,
+        "claim_residual": claim_residual,
     }
 
 

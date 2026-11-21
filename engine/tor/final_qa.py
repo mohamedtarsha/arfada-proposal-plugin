@@ -160,6 +160,10 @@ def run_final_qa(run_dir: str | Path, *, plugin_version: Optional[str] = None) -
     findings += _check_current_project_contamination(ctx)
     findings += _check_client_placeholders(ctx)
     findings += _check_sampling(ctx)
+    # v0.6.11 claim gating (separate from numeric QA)
+    findings += _check_claim_consistency(ctx)
+    findings += _check_semantic_consistency(ctx)
+    findings += _check_source_inconsistency(ctx)
 
     # dedup
     seen, uniq = set(), []
@@ -1226,3 +1230,86 @@ def to_markdown(report: dict) -> str:
     lines += ["## Recommendation", "", rec, "",
               "> Automated QA passed does NOT replace professional human proposal review."]
     return "\n".join(lines).rstrip() + "\n"
+
+
+# ---------------------------------------------------------------------------
+# CHECK: claim consistency / semantic consistency / TOR source register (v0.6.11)
+# ---------------------------------------------------------------------------
+
+def _claim_state(ctx) -> dict:
+    if "_claim_state" not in ctx:
+        try:
+            from .claim_state import build_claim_state
+            ctx["_claim_state"] = build_claim_state(ctx["run_dir"])
+        except Exception:
+            ctx["_claim_state"] = {}
+    return ctx["_claim_state"]
+
+
+def _check_claim_consistency(ctx) -> list[Finding]:
+    """Definitive statements that contradict the canonical claim / package state,
+    and named personnel qualifications without VERIFIED CV evidence."""
+    from .claim_language import section_issues
+    out = []
+    state = _claim_state(ctx)
+    if not state:
+        return out
+    for sid, cand in ctx["gen_sections"].items():
+        for issue in section_issues(cand, state, section_id=sid):
+            if issue.claim == "field_roster":
+                continue                         # reported by the semantic check
+            if issue.kind == "PERSONNEL_UNVERIFIED":
+                out.append(Finding("PERSONNEL_EVIDENCE", ERROR, "unverified_qualification",
+                                   f"{issue.detail} — stated as a team qualification",
+                                   evidence=issue.sentence[:160], section_id=sid,
+                                   recommended_action="State only CV-verified qualifications, "
+                                                      "or soften the claim."))
+            else:
+                out.append(Finding("CLAIM_CONSISTENCY", ERROR, "claim_contradicts_state",
+                                   f"'{issue.claim}' is {issue.status} but the text states it as "
+                                   "complete", evidence=issue.sentence[:160], section_id=sid,
+                                   recommended_action=(f"Use: {issue.replacement}"
+                                                       if issue.replacement else
+                                                       "Rewrite in provisional / future language.")))
+    return out
+
+
+def _check_semantic_consistency(ctx) -> list[Finding]:
+    """Proposal-level contradictions: Impact Evaluation vs contribution-only inference;
+    a local field roster claimed without evidence."""
+    from .claim_language import find_semantic_issues, find_claim_issues
+    out = []
+    texts = {sid: _section_text(c) for sid, c in ctx["gen_sections"].items()}
+    if not texts:
+        return out
+    at = ctx["tor"].get("assignment_type") or {}
+    labels = [str(at.get("label") or ""), str(ctx["blueprint"].get("title") or "")]
+    for issue in find_semantic_issues(texts, labels=[l for l in labels if l]):
+        out.append(Finding("SEMANTIC_CONSISTENCY", ERROR, "impact_vs_contribution",
+                           issue.detail, evidence=issue.sentence[:160],
+                           section_id=issue.section_id,
+                           recommended_action="Call it an endline / final evaluation; keep "
+                                              "'impact' for designs with causal attribution."))
+    state = _claim_state(ctx)
+    roster_only = {"claims": {"field_roster": (state.get("claims") or {}).get("field_roster", {})}}
+    for sid, text in texts.items():
+        for issue in find_claim_issues(text, roster_only, section_id=sid):
+            out.append(Finding("SEMANTIC_CONSISTENCY", ERROR, "roster_claim_without_evidence",
+                               f"Local field roster claimed but roster evidence is "
+                               f"{issue.status}", evidence=issue.sentence[:160], section_id=sid,
+                               recommended_action=f"Use: {issue.replacement}"))
+    return out
+
+
+def _check_source_inconsistency(ctx) -> list[Finding]:
+    """TOR figures / wording that do not reconcile — logged, never silently corrected."""
+    out = []
+    data = _load(ctx["run_dir"], "source_inconsistencies.json") or {}
+    for it in data.get("items", []):
+        out.append(Finding("SOURCE_INCONSISTENCY", INFO, it.get("type", "source").lower(),
+                           f"TOR source inconsistency: {it.get('detail', '')}",
+                           evidence=str(it.get("excerpt", ""))[:160], blocks_client=False,
+                           recommended_action="Reproduce the TOR values unchanged and state they "
+                                              "will be reconciled against the approved baseline "
+                                              "dataset and PMF during inception."))
+    return out

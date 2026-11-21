@@ -135,7 +135,9 @@ def _evidence_text(p: dict) -> str:
     parts = PurePath(rel).parts
     ev = p.get("evidence") or {}
     snippets = " ".join(str(v) for v in ev.values()) if isinstance(ev, dict) else ""
-    return _fold(" ".join(list(parts[1:]) + list(p.get("roles") or []) + [snippets]))
+    # v0.6.11 evidence gating: CV evidence text + ARFADA's filing folders only.
+    # A parsed job title alone is never evidence of sector / evaluation expertise.
+    return _fold(" ".join(list(parts[1:]) + [snippets]))
 
 
 def nomination_score(p: dict, ctx: dict) -> tuple[float, dict]:
@@ -159,7 +161,7 @@ def nomination_score(p: dict, ctx: dict) -> tuple[float, dict]:
     th = sum(1 for t in ctx.get("themes", ()) if re.search(_THEMES[t], text, re.I))
     if th:
         b["theme"] = min(6 * th, 12)
-    if _EVALUATION.search(text) or "Evaluator" in roles:
+    if _EVALUATION.search(text):
         b["evaluation"] = 8
         if _BASE_END.search(text):
             b["baseline_endline"] = 4

@@ -43,6 +43,17 @@ def preexport_check(run_dir: Path) -> dict:
 
     ready = blocked = 0
     has_gap = False
+    # v0.6.11: re-validate claims against the LIVE claim state (a packet's copy may be
+    # stale once a file has been added to the package)
+    live_claims = None
+    try:
+        from .claim_state import build_claim_state
+        _cs = build_claim_state(run_dir)
+        live_claims = {"claims": {k: {"status": v.get("status")}
+                                  for k, v in _cs.get("claims", {}).items()},
+                       "team": _cs.get("team", [])}
+    except Exception:
+        live_claims = None
 
     for sec in blueprint["sections"]:
         sid = sec["section_id"]
@@ -64,6 +75,8 @@ def preexport_check(run_dir: Path) -> dict:
         # re-validate against packet if present (schema, decisions, facts)
         if packet_path.exists():
             packet = json.loads(packet_path.read_text(encoding="utf-8"))
+            if live_claims and "claim_state" in packet:
+                packet["claim_state"] = live_claims
             v = validate_candidate(packet, candidate)
             if not v["valid"]:
                 for e in v["errors"]:

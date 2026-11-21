@@ -52,6 +52,17 @@ def two_status_report(run_dir: str | Path, *, extra_submission_gaps: list = None
                         for k in keys)]
     buckets = classify_blockers(qa, extra_submission_gaps=extra + pending)
 
+    # v0.6.11: one canonical blocker per unresolved item (claim state included);
+    # proposal_final.docx is an export step, never a substantive blocker
+    from .claim_state import write_claim_state
+    from .canonical_blockers import canonicalize
+    try:
+        claim_state = write_claim_state(run_dir)
+    except Exception:
+        claim_state = {}
+    buckets[FINAL_SUBMISSION_BLOCKER] = canonicalize(buckets[FINAL_SUBMISSION_BLOCKER],
+                                                     claim_state=claim_state)
+
     draft_blockers = buckets[DRAFT_BLOCKER]
     final_blockers = buckets[FINAL_SUBMISSION_BLOCKER]
     warnings = buckets[WARNING]
@@ -75,6 +86,9 @@ def two_status_report(run_dir: str | Path, *, extra_submission_gaps: list = None
         "submission_package_status": package,
         "draft_blockers": draft_blockers,
         "final_submission_blockers": final_blockers,
+        "canonical_blockers": [b["blocker"] for b in final_blockers],
+        "claim_state": {k: v.get("status") for k, v in
+                        (claim_state.get("claims") or {}).items()},
         "warnings": warnings,
         "improvements": buckets["IMPROVEMENT"],
         "internal_gaps_md": gaps_md,
