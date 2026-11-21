@@ -279,13 +279,16 @@ class Knowledge:
     def search_staff(
         self, *, country: Optional[str] = None, role: Optional[str] = None,
         min_years: Optional[int] = None, language: Optional[str] = None,
-        limit: int = 5,
+        limit: int = 5, strict_country: bool = False,
     ) -> list[dict]:
         """Deterministic staff candidate search over normalized CV profiles.
 
-        Hard constraints (min_years) FILTER; soft factors RANK. Never auto-selects
-        — returns candidate suggestions for user approval via Decision Review.
+        Hard constraints (min_years; country when strict_country) FILTER; soft
+        factors RANK. ``country`` matches the canonical CV country (from the top
+        folder under Staff CVs) or an expert pool such as "International Experts".
+        Never auto-selects — returns candidate suggestions for user approval.
         """
+        from .lknowledge.staff_country import matches_country
         candidates = []
         for p in self._live_staff:
             # hard filter: minimum years of experience
@@ -293,8 +296,11 @@ class Knowledge:
                 ye = p.get("years_experience")
                 if ye is None or ye < min_years:
                     continue
+            in_country = bool(country) and matches_country(p, country)
+            if strict_country and country and not in_country:
+                continue
             score = 0
-            if country and (p.get("country") or "").lower() == country.lower():
+            if in_country:
                 score += 4
             if role and any(role.lower() in r.lower() for r in p.get("roles", [])):
                 score += 3

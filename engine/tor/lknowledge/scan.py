@@ -15,6 +15,7 @@ from typing import Optional
 
 from ..gknowledge.cache import Cache
 from ..gknowledge import normalize as N
+from .staff_country import apply_country, attribute_country
 
 _PDF = ".pdf"
 _DOCX = ".docx"
@@ -170,20 +171,25 @@ def scan_staff(root: Path, cache: Cache, state: dict, report: dict) -> None:
         fid = "cv_" + hashlib.sha1(rel.encode()).hexdigest()[:12]
         seen.add(fid)
         mtime = _mtime(f)
-        country = f.parent.name if f.parent != sdir else ""
+        # Country = FIRST folder below Staff CVs, however deep the CV is nested
+        # (never a role/person subfolder). Pools such as International Experts
+        # set country_pool, not country.
+        attribution = attribute_country(rel)
         if not _available_locally(f):
             unavailable += 1
             report.setdefault("staff_unavailable", []).append(rel)
             if fid in prev:
-                profiles.append(prev[fid])  # keep last good
+                profiles.append(apply_country(prev[fid], rel))  # keep last good
             continue
         if fid in prev and file_state.get(fid, {}).get("modifiedTime") == mtime:
-            profiles.append(prev[fid]); unchanged += 1
+            # unchanged CV: reuse parsed facts, refresh attribution only
+            profiles.append(apply_country(prev[fid], rel)); unchanged += 1
             continue
         text = _extract_text(f)
         prof = N.normalize_cv(text=text, file_id=fid, file_name=f.name,
-                              country=country, modified_time=mtime)
+                              country=attribution["country"], modified_time=mtime)
         prof["source_rel_path"] = rel
+        prof.update(attribution)
         if not text.strip():
             prof["extraction_confidence"] = "LOW"
             prof["parse_warning"] = "no extractable text (possibly scanned)"
