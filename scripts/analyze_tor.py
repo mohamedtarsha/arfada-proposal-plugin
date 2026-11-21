@@ -428,6 +428,16 @@ def analyze(tor_path: str | Path, output_root: str | Path | None = None) -> dict
         inconsistencies, SOURCE_FILE = [], "source_inconsistencies.json"
     result["source_inconsistencies"] = len(inconsistencies)
     _write_json(out_dir / SOURCE_FILE, {"run_id": run_id, "items": inconsistencies})
+    # --- source semantics of TOR population figures (v0.6.13): TARGET vs baseline vs
+    # registered caseload; a TARGET is never promoted to a registered caseload ---
+    try:
+        from engine.tor.source_semantics import scan_blocks as _sem_scan, SEMANTICS_FILE
+        semantics = _sem_scan(all_blocks)
+    except Exception:
+        semantics, SEMANTICS_FILE = {"figures": []}, "source_semantics.json"
+    result["population_figures"] = {str(f["value"]): f["primary"]
+                                    for f in semantics.get("figures", [])}
+    _write_json(out_dir / SEMANTICS_FILE, {"run_id": run_id, **semantics})
     # submission instructions as stated (channel / deadline), for the claim state
     import re as _re
     _sub_cue = _re.compile(r"\b(?:submi\w*|send|sent|apply|application|deadline|closing\s+date)\b", _re.I)

@@ -16,6 +16,7 @@ CAC members"), never merely because it sits within a few characters of a word.
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import Optional
@@ -80,6 +81,8 @@ def _household_survey_claims(sentence: str, section_id: str, exclude_values) -> 
             return      # "90% (1,170 HH)": an indicator count, not the sample
         if re.match(r"^\s*(?:fhh|mhh|female[- ]headed|male[- ]headed)?\s*\+", low[m.end():]):
             return      # the first part of "149 FHH + 99 MHH = 248"
+        if re.match(r"^\s*[/÷×*]\s*\(?\s*\d", low[m.end():]):
+            return      # v0.6.13: an operand of "225 / 0.90 = 250" (the result is the count)
         if check_population and _POPULATION_NEAR.search(
                 low[max(0, m.start() - 30):m.end() + 25]):
             return
@@ -309,17 +312,24 @@ def decision_targets(register: Optional[dict]) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 
 _P_NUM = r"(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
-_P_MIN = re.compile(rf"\bminimum(?:\s+sample(?:\s+size)?)?(?:\s+(?:of|is|=|:|after[^,.;]{{0,40}}))?\s*"
-                    rf"{_P_NUM}|{_P_NUM}[ \t]+(?:\w+[ \t]+){{0,2}}?minimum\b", re.I)
+_P_MIN = re.compile(rf"\bminimum(?:\s+sample(?:\s+size)?)?(?:\s+(?:of|is|=|:|after[^,.;]{{0,40}}?))?\s*"
+                    rf"(?<![\d.,]){_P_NUM}|{_P_NUM}[ \t]+(?:\w+[ \t]+){{0,2}}?minimum\b", re.I)
 _P_ALLOW = re.compile(rf"{_P_NUM}\s*%\s*(?:\w+\s+){{0,3}}?(?:non-?response|reserve|allowance|"
                       rf"contingency|attrition|buffer)|(?:non-?response|reserve|allowance|attrition|"
                       rf"buffer)[^.;\d]{{0,40}}?{_P_NUM}\s*%", re.I)
 _P_ADJ = re.compile(rf"\b(?:adjusted|inflated|raw|gives?|giving|=|≈|to)\s+(?:a\s+)?(?:\w+\s+){{0,2}}?"
-                    rf"(\d+\.\d+)\b", re.I)
+                    rf"(\d+\.\d+)\b"
+                    # v0.6.13 divisor form: "225 / 0.90 = 250", "225 ÷ (1 − 0.10) = 250"
+                    rf"|\b\d+(?:\.\d+)?\s*[/÷]\s*\(?\s*(?:1\s*[-−–]\s*)?0?\.\d+\s*\)?\s*=\s*{_P_NUM}",
+                    re.I)
 _P_PROPOSED = re.compile(rf"\b(?:propos\w*|planned|final|target)\s+(?:\w+\s+){{0,3}}?(?:sample\s+)?"
                          rf"(?:of\s+|is\s+|=\s*|:\s*)?{_P_NUM}\b|\brounded\s+up\s+to\s+{_P_NUM}\b", re.I)
-_P_BASELINE = re.compile(rf"\bbaseline\s+(?:sample\s+)?(?:\w+\s+){{0,3}}?(?:of\s+|was\s+|=\s*|:\s*)?"
-                         rf"{_P_NUM}\b", re.I)
+# v0.6.13: the baseline SAMPLE (a sample noun is required — "baseline indicators" in a
+# table header is not a sample size); a label cell may be followed by its value cell
+_P_BASELINE = re.compile(
+    rf"\bbaseline\s+(?:(?:survey|round|study)\s+)?(?:sample(?:\s+size)?|target\s+number|"
+    rf"number\s+of\s+(?:households|hhs?)|survey|round)\b(?:\s*\([^)\n]{{0,40}}\))?"
+    rf"(?:[ \t]+\w+){{0,3}}?[ \t]*(?:of|was|were|is|=|:)?\s*{_P_NUM}\b", re.I)
 _P_ROUND_UP = re.compile(r"\bround(?:ed|ing)?\s+up(?:ward)?|\bupward\b|\bceil", re.I)
 
 
@@ -336,30 +346,58 @@ def _first(rx, text):
     return None
 
 
-def sampling_provenance(text: str) -> dict:
-    """Parse and check minimum → allowance → adjusted → proposed (and the baseline).
+def required_initial_sample(minimum: float, nonresponse_pct: float) -> dict:
+    """Non-response inflation: n_initial = n / (1 − r)  (v0.6.13).
 
-    Accepts e.g. minimum 225, ≈10% non-response, adjusted 247.5, proposed 250
-    (rounded up). The baseline sample is recorded separately and never compared
-    with the proposed sample as if it were the same quantity.
+    Interviewing n / (1 − r) households leaves n completed interviews when a share r does
+    not respond; n × (1 + r) under-inflates (225 × 1.10 = 247.5 < 225 / 0.90 = 250).
+    """
+    r = nonresponse_pct / 100.0
+    exact = minimum / (1.0 - r)
+    return {"formula": "n / (1 - r)", "minimum": minimum, "nonresponse_rate": r,
+            "exact": round(exact, 4), "required_initial": int(math.ceil(exact - 1e-9)),
+            "arithmetic": f"{minimum:g} / (1 - {r:g}) = {minimum:g} / {1 - r:g} = {exact:g}"}
+
+
+def sampling_provenance(text: str) -> dict:
+    """Parse and check minimum → non-response → required initial → proposed (+ baseline).
+
+    v0.6.13: the required initial sample is n / (1 − r) (225 / 0.90 = 250), never
+    n × (1 + r); the arithmetic is stored with the result. The baseline sample is
+    recorded separately and never compared with the proposed sample as if it were the
+    same quantity.
     """
     t = text or ""
     prov = {"minimum": _first(_P_MIN, t), "allowance_pct": _first(_P_ALLOW, t),
             "adjusted": _first(_P_ADJ, t), "proposed": _first(_P_PROPOSED, t),
             "baseline": _first(_P_BASELINE, t),
-            "rounding": "upward" if _P_ROUND_UP.search(t) else ""}
+            "rounding": "upward" if _P_ROUND_UP.search(t) else "",
+            "formula": "n / (1 - r)", "required_initial": None, "exact_initial": None,
+            "arithmetic": None, "draft_formula": ""}
     issues = []
     mn, pct, adj, prop = prov["minimum"], prov["allowance_pct"], prov["adjusted"], prov["proposed"]
     if mn and prop and prop < mn:
         issues.append(f"proposed sample {prop:g} is below the minimum {mn:g}")
-    if mn and pct and adj and abs(mn * (1 + pct / 100.0) - adj) > max(1.0, 0.01 * adj):
-        issues.append(f"adjusted value {adj:g} does not equal {mn:g} × (1 + {pct:g}%)")
+    if mn and pct and 0 < pct < 100:
+        req = required_initial_sample(mn, pct)
+        prov["required_initial"], prov["exact_initial"] = req["required_initial"], req["exact"]
+        prov["arithmetic"] = req["arithmetic"]
+        if adj is not None:
+            if abs(adj - req["exact"]) <= max(0.5, 0.005 * adj):
+                prov["draft_formula"] = "n / (1 - r)"
+            elif abs(adj - mn * (1 + pct / 100.0)) <= max(0.5, 0.005 * adj):
+                prov["draft_formula"] = "n * (1 + r)"
+                issues.append(f"adjusted value {adj:g} uses {mn:g} × (1 + {pct:g}%); the "
+                              f"non-response adjustment is {mn:g} / (1 − {pct / 100.0:g}) = "
+                              f"{req['exact']:g}")
+            else:
+                issues.append(f"adjusted value {adj:g} does not equal {mn:g} / (1 − "
+                              f"{pct / 100.0:g}) = {req['exact']:g}")
+        if prop and prop + 1e-9 < req["required_initial"]:
+            issues.append(f"proposed sample {prop:g} is below the required initial sample "
+                          f"{req['required_initial']} ({req['arithmetic']})")
     if adj and prop and prop < adj:
         issues.append(f"proposed sample {prop:g} is below the adjusted value {adj:g}")
-    if mn and pct and prop and not adj:
-        target = mn * (1 + pct / 100.0)
-        if prop + 0.5 < target:
-            issues.append(f"proposed sample {prop:g} is below {mn:g} + {pct:g}% ({target:g})")
     prov["consistent"] = not issues
     prov["issues"] = issues
     prov["found"] = any(prov[k] is not None for k in ("minimum", "adjusted", "proposed"))

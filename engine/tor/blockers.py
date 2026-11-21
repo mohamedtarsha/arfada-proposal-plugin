@@ -86,7 +86,22 @@ def _bullet(item: Any) -> str:
     return f"- {item}"
 
 
-def render_internal_gaps(buckets: dict, *, extra_notes: list = None) -> str:
+def render_coverage(coverage: dict) -> list:
+    """Evidence-aware mandatory coverage lines for internal_gaps.md (v0.6.13)."""
+    if not coverage or not coverage.get("line"):
+        return []
+    lines = ["## Mandatory requirement coverage (evidence-aware)", f"- {coverage['line']}"]
+    for r in coverage.get("rows") or []:
+        if not r.get("mandatory", True) or r.get("coverage") == "FULLY_COVERED":
+            continue
+        gaps = ", ".join(r.get("gaps") or [])
+        lines.append(f"- {r['coverage']} · {r['requirement_type']} · {r['text'][:110]}"
+                     + (f" — not evidenced: {gaps}" if gaps else ""))
+    return lines + [""]
+
+
+def render_internal_gaps(buckets: dict, *, extra_notes: list = None,
+                         coverage: dict = None) -> str:
     """Render internal_gaps.md — short, actionable, team-only (never client-facing)."""
     lines = ["# Internal gaps — NOT for the client draft", ""]
     final_b = buckets.get(FINAL_SUBMISSION_BLOCKER, [])
@@ -109,6 +124,7 @@ def render_internal_gaps(buckets: dict, *, extra_notes: list = None) -> str:
         lines.append("## Warnings (review)")
         lines += [_bullet(i) for i in warns]
         lines.append("")
+    lines += render_coverage(coverage)
     if improvements:
         lines.append("## Improvements (optional, boost competitiveness)")
         lines += [_bullet(i) for i in improvements]
