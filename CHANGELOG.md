@@ -6,6 +6,37 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.6.10] — 2026-11-21
+
+### Fixed — real-TOR regression (original South Darfur ZOA PDF failed on v0.6.9)
+- **Layout-tolerant title** (`engine/tor/tor_metadata.py`). PDF extraction puts page-1
+  table cells before the text and merges the heading with "Terms of Reference (ToR)
+  Background …". Titles now come from first-page text blocks before table cells; a
+  heading embedded at the start of a long block is cut at the first section marker
+  (Terms of Reference / ToR / Background / Introduction / RFP / "1. …"). Table
+  field/value pairs ("Indicator: Baseline", "Location: Sudan") and keyword-only
+  candidates ("Baseline", "Final Evaluation") are never titles.
+- **Assignment type robust to title failures** (`engine/tor/assignment_type.py`). A
+  suspicious title (short "field: value" pair, or LOW confidence) is ignored. More
+  references to an existing baseline are discounted (established baseline information,
+  baseline assessment conducted, in/established in the baseline, baseline benchmarks,
+  baseline survey methods / process, experience in conducting baseline surveys).
+- **Numbered submission items** (`engine/tor/extractor.py`). Inside a list introduced by
+  an explicit submission cue ("Interested parties must submit the following:",
+  "The proposal must include …"), numbered HEADING blocks are submission
+  requirements (lower-case continuation lines merged). Headings elsewhere are untouched.
+- **Submission blockers** (`engine/tor/submission_blockers.py`). Required registration
+  evidence ("Evidence of registration …") without a file under `annexes/registration/`
+  is a FINAL_SUBMISSION_BLOCKER, alongside budget and previous work. Never a draft
+  blocker. Checklist items without a known identity keep the TOR's own item name.
+- **Coordinated localities**: "Nyala Shamal and Nyala Janoub localities" yields both
+  names; places are reported in document order.
+- Regression tests: `tests/test_v0610_real_pdf_pattern.py` with a PDF fixture that
+  reproduces the real extraction pattern (`tests/fixtures/south_darfur_pdf.py`); set
+  `ARFADA_REAL_TOR` to run the same checks on the original PDF (never committed).
+
+---
+
 ## [0.6.9] — 2026-11-21
 
 ### Fixed — four issues from the fresh South Darfur v0.6.8 Fast Mode test

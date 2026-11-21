@@ -45,7 +45,8 @@ def two_status_report(run_dir: str | Path, *, extra_submission_gaps: list = None
     pending = pending_submission_blockers(run_dir, reqs)
     keys = {p["item_key"] for p in pending}
     _labels = {"detailed_budget": "Financial offer / detailed budget",
-               "previous_work": "Previous-work example"}
+               "previous_work": "Previous-work example",
+               "registration": "Registration evidence"}
     extra = [g for g in (extra_submission_gaps or [])
              if not any(_labels[k] in str(g.get("message", "") if isinstance(g, dict) else g)
                         for k in keys)]

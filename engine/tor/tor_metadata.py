@@ -1,4 +1,4 @@
-"""Deterministic TOR metadata from the document itself (v0.6.9).
+"""Deterministic TOR metadata from the document itself (v0.6.9; layout-tolerant title v0.6.10).
 
 Uploaded TOR files carry no metadata, so assignment title, client and country
 were always empty for file-based runs. This detector reads the document text and
@@ -104,6 +104,12 @@ _DIRECTIONAL = re.compile(r"\b((?:North|South|East|West|Central|Upper|Lower)\s+[
 _ADMIN_UNIT = re.compile(
     r"\b([A-Z][a-z]{3,}(?:\s+[A-Z][a-z]{3,})?)\s+(?:state|locality|localities|governorate|"
     r"province|district|region|town|city|camp)\b")
+_PLACE = r"[A-Z][a-z]{3,}(?:\s+[A-Z][a-z]{3,})?"
+# coordinated places before a plural unit: "Nyala Shamal and Nyala Janoub localities",
+# "Kassala, Gedaref and Sennar states" — every listed name, not only the last one
+_COORD_UNIT = re.compile(
+    rf"\b((?:{_PLACE}\s*,\s*)*{_PLACE}\s+(?:and|&)\s+{_PLACE})\s+"
+    r"(?:states|localities|governorates|provinces|districts|regions|towns|cities|camps)\b")
 _PLACE_STOP = {"The", "This", "Republic", "State", "Country", "Project", "Office", "Final",
                "Support", "Evaluation", "Terms", "Reference", "Programme", "Program",
                "Central African", "North East", "South East", "South West", "North West"}
@@ -136,26 +142,88 @@ def _is_sentence(t: str) -> bool:
     return len(t.split()) > 28 or bool(re.search(r"\b(?:will|shall|is|are|was|were)\b.*\.$", t))
 
 
+# A short "field: value" pair ("Indicator: Baseline", "Location: Sudan") — table
+# labels and metadata cells, never a document title.
+_FIELD_PAIR = re.compile(r"^\s*[^:]{1,40}:\s*\S")
+# Section-start markers that end a title embedded at the start of a longer block
+# ("Final Evaluation for “…” Terms of Reference (ToR) Background ZOA is seeking …").
+_TITLE_BOUNDARY = re.compile(
+    r"\s*(?:[-–—|:]\s*)?(?:\(?\s*terms\s+of\s+reference\b|\(\s*tors?\s*\)|\btors?\b(?=\s*[:\-–(]|\s+[A-Z])|"
+    r"\bbackground\b|\bintroduction\b|"
+    r"\brequest\s+for\s+(?:proposals?|quotations?)\b|\b1\s*[.)]\s+[A-Z])", re.I)
+_TABLE_TYPES = ("TABLE_CELL", "TABLE_PAIR")
+_TITLE_FILLER = {"final", "external", "independent", "terminal", "end", "mid", "term", "the",
+                 "and", "for", "report", "consultancy", "consultant", "services"}
+
+
+def _is_field_pair(t: str) -> bool:
+    """True for a short label/value pair such as "Indicator: Baseline"."""
+    if not _FIELD_PAIR.match(t) or _TITLE_LABEL.match(t):
+        return False
+    return len(t.split()) <= 8
+
+
+def _title_prefix(t: str) -> str:
+    """The title at the start of a longer block, cut at the first section marker."""
+    for m in _TITLE_BOUNDARY.finditer(t):
+        if m.start() == 0:
+            continue
+        head = _clean(t[:m.start()])
+        if 3 <= len(head.split()) <= 30 and not _is_sentence(head):
+            return head
+        break
+    return ""
+
+
+def _title_candidate(t: str) -> str:
+    """A plausible assignment title from one line, or "" (no keyword-only matches)."""
+    if _GENERIC_HEADING.match(t) or len(t) < 8 or _is_field_pair(t):
+        return ""
+    cand = _clean(_TOR_PREFIX.sub("", t)) if _TOR_PREFIX.match(t) else t
+    if _is_sentence(cand) or len(cand) > 220:
+        cand = _title_prefix(cand)
+    if not cand or not _ASSIGN_WORDS.search(cand) or len(cand) > 220:
+        return ""
+    # an assignment word alone ("Baseline", "Evaluation") is not a title
+    rest = [w for w in re.findall(r"[A-Za-z]{3,}", _ASSIGN_WORDS.sub(" ", cand))
+            if w.lower() not in _TITLE_FILLER]
+    if len(cand.split()) < 2 or not rest:
+        return ""
+    # "“ Support … Project ”" -> "“Support … Project”" (PDF spacing inside curly quotes)
+    cand = re.sub(r"([“‘])\s+", r"\1", cand)
+    return re.sub(r"\s+([”’])", r"\1", cand)
+
+
 def detect_title(lines: list[tuple[str, str]]) -> tuple[str, str]:
+    """Explicit title label, else the first-page assignment heading.
+
+    Layout tolerant: PDF extraction may emit first-page table cells before the
+    heading, and may merge the heading with the text after it. Table cells and
+    "field: value" pairs are never titles; a heading merged into a longer block is
+    cut at the first section marker (Terms of Reference / ToR / Background …).
+    """
     first = lines[:FIRST_PAGE_BLOCKS]
     for t, _bt in first:                                   # explicit label wins
         m = _TITLE_LABEL.match(t)
         if m and _ASSIGN_WORDS.search(m.group(1)):
             return _clean(m.group(1)), "LABEL"
-    for i, (t, bt) in enumerate(first):
-        if _GENERIC_HEADING.match(t) or _is_sentence(t) or len(t) < 8:
-            continue
-        cand = _clean(_TOR_PREFIX.sub("", t)) if _TOR_PREFIX.match(t) else t
-        if not _ASSIGN_WORDS.search(cand) or len(cand) > 220:
+    # prefer first-page text blocks over table cells, whatever their order
+    text_lines = [(t, bt) for t, bt in lines if bt not in _TABLE_TYPES][:FIRST_PAGE_BLOCKS]
+    for i, (t, bt) in enumerate(text_lines):
+        cand = _title_candidate(t)
+        if not cand:
             continue
         # a short heading ("Final Evaluation for") continued on the next line
         if (len(cand.split()) <= 4 or re.search(r"\b(?:for|of|on)$", cand, re.I)) \
-                and i + 1 < len(first):
-            nxt = first[i + 1][0]
+                and i + 1 < len(text_lines):
+            nxt = text_lines[i + 1][0]
             if re.match(r"^(?:for|of|on)\b|^[\"“‘']", nxt, re.I) or \
                     re.search(r"\b(?:for|of|on)$", cand, re.I):
-                if not _is_sentence(nxt) and len(nxt) < 200:
+                if _is_sentence(nxt) or len(nxt) >= 200:
+                    nxt = _title_prefix(nxt)
+                if nxt and not _is_sentence(nxt) and len(nxt) < 200:
                     cand = _clean(f"{cand} {nxt}")
+                    cand = re.sub(r"\s+([”’])", r"\1", re.sub(r"([“‘])\s+", r"\1", cand))
         return cand.rstrip("."), "HEADING" if bt in ("HEADING", "TITLE") else "FIRST_PAGE"
     return "", ""
 
@@ -227,6 +295,10 @@ def detect_subnational(text: str, title: str, country: str,
         counts[m.group(1)] += 1
     for m in _ADMIN_UNIT.finditer(text):
         counts[m.group(1)] += 1
+    for m in _COORD_UNIT.finditer(text):
+        for place in re.split(r"\s*,\s*|\s+(?:and|&)\s+", m.group(1)):
+            if place.strip():                 # named with an explicit admin unit
+                counts[place.strip()] += 2
     before_country = (r"\b([A-Z][a-z]{3,}(?:\s+[A-Z][a-z]{3,})?)\s*,\s*(?:"
                       + crx.pattern + r")")
     for m in re.finditer(before_country, text):
@@ -242,7 +314,10 @@ def detect_subnational(text: str, title: str, country: str,
         if any(rx.fullmatch(place) for _nm, rx in _COUNTRY_RE):
             continue
         out.append(place)
-    return out[:5]
+    out = out[:5]
+    # report in document order (title first), as the TOR lists them
+    full = f"{title or ''}\n{text}"
+    return sorted(out, key=lambda p: (full.find(p) if full.find(p) >= 0 else len(full)))
 
 
 def detect_metadata(blocks: list[dict]) -> dict:

@@ -170,6 +170,10 @@ class TestSubmissionBlockers(unittest.TestCase):
         f.write_bytes(b"%PDF-1.4")
         (d / "previous_work.json").write_text(json.dumps(
             {"file": str(f), "clearance_confirmed": True}), encoding="utf-8")
+        # v0.6.10: required registration evidence is tracked too
+        reg = d / "annexes" / "registration" / "certificate.pdf"
+        reg.parent.mkdir(parents=True)
+        reg.write_bytes(b"%PDF-1.4")
         self.assertEqual(pending_submission_blockers(d, reqs), [])
         # clearance missing → still blocked
         (d / "previous_work.json").write_text(json.dumps(

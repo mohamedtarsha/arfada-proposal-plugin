@@ -78,13 +78,20 @@ _SIGNALS_TOR: list[tuple[str, str, int]] = [
 # "baseline" used as the comparison/reference dataset — not the requested work.
 _BASELINE_REFERENCE = re.compile(
     r"(?:against|compared\s+(?:to|with)|relative\s+to|from|since|at|versus|vs\.?|"
-    r"existing|previous|available|completed|conducted)\s+(?:(?:the|a|its|this)\s+)?"
+    r"existing|previous|available|completed|conducted|established|in|on\s+the)\s+"
+    r"(?:(?:the|a|its|this)\s+)?"
     r"(?:[\w-]+\s+){0,3}?base-?line\b"
     r"|\bbase-?line\s+(?:values?|data(?:set)?|figures?|findings|results|reports?|levels?|"
     r"measurements?|samples?|tools?|instruments?|questionnaires?|indicators?|targets?|"
-    r"(?:survey|study|assessment)\s+(?:was|were|has|had)|was|were|showed|shows|found|"
-    r"indicated|reported|established|conducted|and\s+end[- ]?line|vs\.?|–|-)",
+    r"information|benchmarks?|"
+    r"(?:survey|study|assessment)\s+(?:was|were|has|had|conducted|carried\s+out|completed|"
+    r"undertaken|methods?|tools?|process)|was|were|showed|shows|found|"
+    r"indicated|reported|established|conducted|and\s+end[- ]?line|vs\.?|–|-)"
+    # bidder qualifications / past experience ("experience in conducting baseline surveys")
+    r"|\bexperience\s+(?:in\s+|of\s+)?(?:[\w-]+\s+){0,2}?base-?line\b",
     re.I)
+# a short "field: value" pair ("Indicator: Baseline") is a table cell, not a title
+_FIELD_PAIR_TITLE = re.compile(r"^\s*[^:]{1,40}:\s*\S")
 # explicit labels for the requested assignment ("conduct a final evaluation")
 _EXPLICIT_LABEL = re.compile(
     r"(?:conduct|undertake|carry\s+out|commission|perform|lead)\s+(?:an?\s+|the\s+)?"
@@ -135,11 +142,21 @@ def _gather_text(metadata: dict, requirements: list[dict]) -> str:
     return "\n".join(parts).lower()
 
 
+def _suspicious_title(value: str, confidence: str = "") -> bool:
+    """A title candidate too weak to steer the classification (e.g. "Indicator: Baseline")."""
+    v = (value or "").strip()
+    if str(confidence or "").upper() == "LOW":
+        return True
+    return bool(_FIELD_PAIR_TITLE.match(v)) and len(v.split()) <= 8
+
+
 def _title_text(metadata: dict) -> str:
     parts = []
     for key in ("assignment", "title"):
         entry = metadata.get(key)
         if isinstance(entry, dict) and entry.get("value"):
+            if _suspicious_title(entry["value"], entry.get("confidence", "")):
+                continue
             parts.append(entry["value"])
     return " ".join(parts).lower()
 
