@@ -6,6 +6,32 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.6.14] — 2026-11-21
+
+### Fixed — confirmed fresh v0.6.13 South Darfur run
+- **Response ≠ evidence.** The run was BLOCKED by seven "Mandatory requirement MISSING"
+  draft blockers although the draft answers SADD, CHS/Sphere, neutrality, South Darfur
+  familiarity, rapid deployment, capacity building and food-security indicators. The
+  writer had labelled those weak-evidence ledger entries PARTIAL, and QA counted only
+  ledger ADDRESSED as answered. Two independent dimensions now exist per requirement:
+  - **RESPONSE_STATUS** (ADDRESSED / PARTIALLY_ADDRESSED / NOT_ADDRESSED) is computed
+    from the generated text and the requirement → section mapping
+    (`engine/tor/response_coverage.py`). The ledger is a mapping only; its status label
+    and any injected `response_status` are ignored (anti-gaming). A qualification must
+    name every required element in the citing or owning sections; other requirements
+    need existing, substantive cited blocks.
+  - **EVIDENCE_STATUS** (VERIFIED / PARTIAL / GAP / NOT_REQUIRED) is computed from CV /
+    company / claim-state provenance, independently.
+- **QUALIFICATION_READINESS** (VERIFIED / PARTIAL / AT_RISK) shows evidence gaps in
+  `internal_gaps.md`. It never blocks the technical draft and adds no canonical blocker.
+  The draft is BLOCKED only for content not responded to; a partial response is a warning.
+- **Coverage reporting** is split into two summaries (`final_qa.json`, `final_qa.md`,
+  `internal_gaps.md`, `requirement_coverage.json`): CONTENT COVERAGE (addressed / partially
+  addressed / not addressed) and EVIDENCE COVERAGE (verified / partial / gaps).
+
+### Unchanged
+- FAST PROPOSAL flow, Writing DNA, team ranking, the canonical submission blockers.
+
 ## [0.6.13] — 2026-11-21
 
 ### Fixed — confirmed v0.6.12 South Darfur output
