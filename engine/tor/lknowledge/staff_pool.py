@@ -65,12 +65,18 @@ def _candidates() -> list[tuple[str, Path]]:
 
 
 def _normalize(profiles: list) -> list:
-    """Ensure country attribution is present (older indexes predate v0.6.7)."""
+    """Ensure country attribution (v0.6.7) and document type (v0.6.8) are present.
+
+    Both are derived from fields the index already holds; nothing is re-parsed.
+    """
     from .staff_country import apply_country
+    from .staff_doctype import classify_document
     out = []
     for p in profiles:
         if "country_status" not in p and p.get("source_rel_path"):
             p = apply_country(p, p["source_rel_path"])
+        if "document_type" not in p:
+            p = {**p, **classify_document(p)}
         out.append(p)
     return out
 

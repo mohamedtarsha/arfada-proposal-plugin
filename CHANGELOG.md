@@ -30,6 +30,19 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
   measured against an existing baseline is ENDLINE ("Final (Endline) Evaluation").
   The Writing DNA exemplar scan keeps the legacy scoring unchanged.
 - Regression tests: `tests/test_south_darfur_regression.py` (+ synthetic fixture).
+- **Team nomination guard + evidence-based ranking** (`lknowledge/staff_doctype.py`,
+  `lknowledge/staff_nominate.py`). Each staff profile gets `document_type`
+  (CV | SUPPORTING_DOCUMENT | UNKNOWN) and a `cv_likeness_score`, derived from the
+  indexed fields and file/folder names (no re-parse; provenance unchanged).
+  Fast Mode `rank_team` keeps the base `match_score` and orders by a deterministic
+  `nomination_score` (country/pool, CV, TOR role match, parsed roles, theme,
+  evaluation/baseline/endline experience, evidenced geography, structured years,
+  confidence tie-break) with a per-factor `score_breakdown`. CVs first;
+  supporting documents never auto-nominated (still searchable); UNKNOWN only to
+  fill; one entry per person. `team_needs_question` is raised only for close top
+  candidates, weak evidence or an unconfirmed mandatory lead requirement — and then
+  becomes a `team_lead_choice` question inside the 5-question cap.
+- Regression tests: `tests/test_team_nomination.py`.
 
 ---
 
