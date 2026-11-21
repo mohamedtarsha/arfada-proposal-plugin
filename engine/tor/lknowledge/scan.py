@@ -16,6 +16,7 @@ from typing import Optional
 from ..gknowledge.cache import Cache
 from ..gknowledge import normalize as N
 from .staff_country import apply_country, attribute_country
+from .staff_doctype import with_document_type
 
 _PDF = ".pdf"
 _DOCX = ".docx"
@@ -183,13 +184,15 @@ def scan_staff(root: Path, cache: Cache, state: dict, report: dict) -> None:
             continue
         if fid in prev and file_state.get(fid, {}).get("modifiedTime") == mtime:
             # unchanged CV: reuse parsed facts, refresh attribution only
-            profiles.append(apply_country(prev[fid], rel)); unchanged += 1
+            profiles.append(with_document_type(apply_country(prev[fid], rel)))
+            unchanged += 1
             continue
         text = _extract_text(f)
         prof = N.normalize_cv(text=text, file_id=fid, file_name=f.name,
                               country=attribution["country"], modified_time=mtime)
         prof["source_rel_path"] = rel
         prof.update(attribution)
+        prof = with_document_type(prof)
         if not text.strip():
             prof["extraction_confidence"] = "LOW"
             prof["parse_warning"] = "no extractable text (possibly scanned)"

@@ -136,6 +136,8 @@ def repair_staff_index(cache, staff_dir: Optional[str | Path] = None) -> dict:
             fixed.append(p)
             continue
         q = apply_country(p, rel)
+        from .staff_doctype import with_document_type
+        q = with_document_type(q)
         if any(q.get(k) != p.get(k) for k in
                ("country", "country_pool", "source_country_folder", "country_status")):
             changed += 1

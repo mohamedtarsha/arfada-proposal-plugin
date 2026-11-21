@@ -29,7 +29,7 @@ _AUTO_CATEGORIES = {
 # A question is justified only for these (§2). Priority order = list order.
 _QUESTION_PRIORITY = [
     "assignment_type_ambiguous", "budget_ceiling", "strategic_methodology",
-    "previous_work_sharing", "mandatory_unknown_fact",
+    "previous_work_sharing", "mandatory_unknown_fact", "team_lead_choice",
 ]
 _MAX_QUESTIONS = 5
 
@@ -143,16 +143,24 @@ def build_questions(tor: dict, requirements: list[dict], *,
 
 
 def rank_team(knowledge, requirements: list[dict], *, country: str = "",
-              limit: int = 6) -> dict:
+              limit: int = 6, tor: Optional[dict] = None) -> dict:
     """Rank CV candidates; pick the strongest provisional team (§8).
 
-    Flags team_needs_question only when the top two are genuinely close, or no
-    candidate is available for a mandatory role.
+    Candidates come from the full staff pool (base ``match_score`` kept) and are
+    ordered by an evidence-based ``nomination_score`` (lknowledge.staff_nominate):
+    CVs first, supporting documents never, UNKNOWN only to fill, one entry per
+    person. ``team_needs_question`` is raised only when the choice is genuinely the
+    user's: close top candidates, weak evidence, or an unconfirmed mandatory
+    eligibility requirement.
     """
+    from .lknowledge.staff_nominate import nominate, team_question, tor_context
+    ctx = tor_context(tor, requirements, country)
     try:
-        candidates = knowledge.search_staff(country=country or None, limit=limit)
+        pool_size = getattr(knowledge, "staff_pool_size", 0) or 10000
+        candidates = knowledge.search_staff(country=country or None, limit=pool_size)
     except Exception:
         candidates = []
+    ranked = nominate(candidates, ctx, limit=limit)
     team = [{
         "staff_id": c.get("staff_id"),
         "name": c.get("name"),
@@ -161,18 +169,15 @@ def rank_team(knowledge, requirements: list[dict], *, country: str = "",
         "country_pool": c.get("country_pool", ""),
         "years_experience": c.get("years_experience"),
         "match_score": c.get("match_score", 0),
+        "nomination_score": c.get("nomination_score", 0),
+        "score_breakdown": c.get("score_breakdown", {}),
+        "document_type": c.get("document_type", "UNKNOWN"),
+        "cv_likeness_score": c.get("cv_likeness_score", 0),
         # raw CV is read on demand for shortlisted people only (staff_pool.shortlist_details)
         "source_rel_path": c.get("source_rel_path", ""),
         "provisional": True,
-    } for c in candidates]
-    needs_question = False
-    reason = ""
-    if len(team) >= 2 and abs((team[0]["match_score"] or 0)
-                              - (team[1]["match_score"] or 0)) <= 1:
-        needs_question = True
-        reason = "Top two candidates are closely ranked — confirm the lead."
-    if not team:
-        reason = "No CV candidates available in Knowledge (team is a gap, not a blocker)."
+    } for c in ranked]
+    needs_question, reason = team_question(ranked, ctx)
     pool = getattr(knowledge, "staff_pool_info", None) or {}
     return {"team": team[:5], "team_needs_question": needs_question, "reason": reason,
             "searchable_profiles": getattr(knowledge, "staff_pool_size",
@@ -234,8 +239,15 @@ def autopilot(tor: dict, requirements: list[dict], candidates: list[dict],
     questions = build_questions(tor, requirements,
                                 knowledge_has_rates=knowledge_has_rates,
                                 previous_work_cleared=previous_work_cleared)
-    team = rank_team(knowledge, requirements, country=country) if knowledge else \
+    team = rank_team(knowledge, requirements, country=country, tor=tor) if knowledge else \
         {"team": [], "team_needs_question": False, "reason": "No Knowledge connected."}
+    if team.get("team_needs_question") and len(questions) < _MAX_QUESTIONS:
+        lead = (team.get("team") or [{}])[0]
+        questions.append({"key": "team_lead_choice",
+                          "question": "Who should lead the team for this proposal?",
+                          "reason": team.get("reason", ""),
+                          "suggested": lead.get("name", "")})
+        questions = questions[:_MAX_QUESTIONS]
     experience = rank_experience(knowledge, tor) if knowledge else []
     setup = build_proposed_setup(tor, recs, team, experience)
     return {
