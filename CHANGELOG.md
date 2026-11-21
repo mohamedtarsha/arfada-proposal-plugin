@@ -6,7 +6,7 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
-## [Unreleased]
+## [0.6.8] — 2026-11-21
 
 ### Fixed — three issues from the first real Fast Mode run (South Darfur)
 - **Staff retrieval uses the persisted index.** Team ranking loads the largest
