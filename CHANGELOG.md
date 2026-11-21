@@ -6,6 +6,38 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.6.13] — 2026-11-21
+
+### Fixed — confirmed v0.6.12 South Darfur output
+- **Evidence-aware compliance** (`engine/tor/requirement_evidence.py`). Every requirement
+  is typed as PERSONNEL_QUALIFICATION, COMPANY_QUALIFICATION, METHODOLOGY_REQUIREMENT,
+  DELIVERABLE_REQUIREMENT, SUBMISSION_ARTIFACT or DESIGN_CONSTRAINT. A methodology
+  commitment never satisfies a qualification. A team-level matrix grades each
+  qualification element from the selected experts' CV evidence (collective unless the TOR
+  assigns a role; "at least N years" needs one expert holding both the years and the
+  experience). Coverage is FULLY_COVERED / PARTIALLY_COVERED / EVIDENCE_GAP /
+  NOT_ADDRESSED. Submission artifacts follow the claim state. The mandatory coverage
+  summary (`final_qa.json`, `final_qa.md`, `internal_gaps.md`, `requirement_coverage.json`)
+  now reflects evidence quality. Gaps are reported as improvements and never block the
+  draft. The generation packet lists them in `claim_policy.qualification_evidence_gaps`.
+- **Non-response inflation is n / (1 − r)** (`numeric_claims.required_initial_sample`):
+  225 / 0.90 = 250, not 225 × 1.10 = 247.5. `sampling_provenance` stores the formula, the
+  arithmetic and the formula the draft used. The baseline sample (243) stays a separate
+  reference value. Divisor operands ("225 / 0.90") are not read as household counts. The
+  baseline sample needs a sample noun, so "baseline indicators" in a table header is not
+  read as one.
+- **Source semantics for TOR household figures** (`engine/tor/source_semantics.py`,
+  `source_semantics.json`). Figures are OBSERVED_BASELINE, TARGET, REGISTERED_CASELOAD,
+  PROPOSAL_ASSUMPTION or VERIFIED_PROJECT_RECORD (`project_records.json`). A TARGET is
+  never silently promoted. QA (`SOURCE_SEMANTICS`) and the final-language sanitizer stop
+  a target figure being labelled "registered". A stratum allocation derived from a target
+  composition is written as "Provisional allocation based on the TOR target composition:
+  150 FHH / 100 MHH. The allocation will be recalculated at inception from the
+  registration list." TOR target statements reproduced verbatim are left unchanged.
+
+### Unchanged
+- FAST PROPOSAL flow, Writing DNA, team ranking, the canonical submission blockers.
+
 ## [0.6.12] — 2026-11-21
 
 ### Fixed — confirmed v0.6.11 South Darfur output
