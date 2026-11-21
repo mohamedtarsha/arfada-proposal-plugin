@@ -206,10 +206,16 @@ def scan_staff(root: Path, cache: Cache, state: dict, report: dict) -> None:
         file_state.pop(fid, None)
 
     cache.write_staff(profiles, {"type": "local_folder", "path": str(sdir)})
+    # Portable copy inside this Knowledge folder, so any session that can see the
+    # folder searches the full pool without re-scanning or transferring raw CVs.
+    # This scan covered the whole folder, so its result may legitimately shrink it.
+    from .staff_pool import publish_portable_index
+    portable = publish_portable_index(cache, root, allow_shrink=True)
     report["staff"] = {"status": "OK", "files": len([p for p in profiles]),
                        "profiles": len(profiles), "added": added, "updated": updated,
                        "unchanged": unchanged, "low_confidence": failed,
-                       "unavailable": unavailable, "removed": len(removed)}
+                       "unavailable": unavailable, "removed": len(removed),
+                       "portable_index": portable.get("published", False)}
 
 
 # ---------------------------------------------------------------------------

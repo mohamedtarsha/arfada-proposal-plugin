@@ -93,7 +93,9 @@ class Knowledge:
         self._live_projects: Optional[list] = None
         self._live_metrics: Optional[dict] = None
         self._live_staff: list = []
+        self.staff_pool_info: dict = {"source": "NONE", "count": 0, "considered": []}
         self._resolve_source(run_dir)
+        self._resolve_staff_pool()
         self._by_id: dict[str, dict] = {}
         self._index()
 
@@ -132,6 +134,27 @@ class Knowledge:
             pass
         # 3. static fallback (default)
         self.source_mode = "STATIC_FALLBACK"
+
+    def _resolve_staff_pool(self) -> None:
+        """Team ranking searches the full PERSISTED staff index.
+
+        A run snapshot or a partial re-scan may hold only a subset of CVs; the
+        largest persisted index (user cache or the Knowledge-folder copy) wins, so
+        the full pool stays searchable without transferring the raw CV folder.
+        """
+        try:
+            from .lknowledge.staff_pool import load_staff_pool
+            label = "RUN_SNAPSHOT" if getattr(self, "snapshot_manifest", None) else "LIVE_CACHE"
+            pool = load_staff_pool(self._live_staff, current_label=label)
+            self._live_staff = pool["profiles"]
+            self.staff_pool_info = {k: pool[k] for k in ("source", "path", "count", "considered")}
+        except Exception:
+            self.staff_pool_info = {"source": "UNAVAILABLE", "count": len(self._live_staff),
+                                    "considered": []}
+
+    @property
+    def staff_pool_size(self) -> int:
+        return len(self._live_staff)
 
     def _index(self) -> None:
         # metrics

@@ -130,6 +130,8 @@ def cmd_setup(args) -> int:
         "question_count": result["question_count"],
         "questions": result["questions"],
         "team_needs_question": result["team"].get("team_needs_question"),
+        "staff_pool": {"searchable_profiles": result["team"].get("searchable_profiles", 0),
+                       "source": result["team"].get("staff_pool_source", "")},
         "proposed_setup": result["proposed_setup"],
         "writing_dna": {
             "active": dna_summary.get("writing_dna_active"),

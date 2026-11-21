@@ -6,6 +6,33 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [Unreleased]
+
+### Fixed — three issues from the first real Fast Mode run (South Darfur)
+- **Staff retrieval uses the persisted index.** Team ranking loads the largest
+  persisted staff index (user cache, `<ARFADA Knowledge>/.arfada-index/staff_index.json`,
+  or `ARFADA_STAFF_INDEX`) instead of whatever subset a session re-scanned, so the
+  full pool is searchable without transferring raw CVs. Every CV refresh writes the
+  Knowledge-folder copy; a partial cache never shrinks it. New run snapshots freeze
+  the full pool. Raw CV text is read only for shortlisted candidates
+  (`staff_pool.shortlist_details`). `rank_team` / `fast_proposal.py setup` report
+  `searchable_profiles` and the pool source.
+- **Numeric QA is section- and entity-aware** (`engine/tor/numeric_claims.py`). Only
+  current methodology counts (household survey, KII, FGD, census) are compared, and
+  against the run's approved/provisional decisions when present. Experience/Team
+  sections, past-project tables, ARFADA portfolio metrics, reference values
+  (minimum / baseline / reserve / target) and sub-group mentions are excluded;
+  breakdown tables are summed and must equal the stated total. The below-minimum
+  decision check uses the same current counts.
+- **Assignment-type classifier** (TOR analysis, `context_aware=True`): document title
+  and explicit labels weigh most; "end line" (two words) counts as ENDLINE; "baseline"
+  used as the comparison dataset no longer scores BASELINE; a final evaluation
+  measured against an existing baseline is ENDLINE ("Final (Endline) Evaluation").
+  The Writing DNA exemplar scan keeps the legacy scoring unchanged.
+- Regression tests: `tests/test_south_darfur_regression.py` (+ synthetic fixture).
+
+---
+
 ## [0.6.7] — 2026-11-21
 
 ### Fixed — staff-CV country attribution with nested folders
