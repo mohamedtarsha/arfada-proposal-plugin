@@ -1,0 +1,317 @@
+"""Canonical claim / evidence state for a proposal run (v0.6.11).
+
+Every fact that can appear in proposal text is given one status:
+
+  VERIFIED        evidenced in the run (file in the package, cleared record, CV text,
+                  explicit TOR statement)
+  PROVISIONAL     partly evidenced or pending a human confirmation
+  UNVERIFIED      asserted nowhere / evidence ambiguous
+  MISSING         required by the TOR (or by the process) and not yet available
+  NOT_APPLICABLE  not required for this TOR
+
+The state is built ONLY from the run's own artifacts (requirements, TOR metadata,
+budget.json, previous_work.json, annexes/, proposed_setup.json, staff facts, the
+persisted staff pool) and written to ``claim_state.json``. Generation, validation,
+QA and export all read it, so no unresolved fact can be written as complete.
+"""
+from __future__ import annotations
+
+import datetime as _dt
+import json
+import re
+from pathlib import Path
+from typing import Optional
+
+VERIFIED = "VERIFIED"
+PROVISIONAL = "PROVISIONAL"
+UNVERIFIED = "UNVERIFIED"
+MISSING = "MISSING"
+NOT_APPLICABLE = "NOT_APPLICABLE"
+STATUSES = (VERIFIED, PROVISIONAL, UNVERIFIED, MISSING, NOT_APPLICABLE)
+
+CLAIM_FILE = "claim_state.json"
+
+# Allowed wording for a fact that is NOT verified (generation + sanitizer use these)
+SAFE_WORDING = {
+    "registration_evidence": "Registration evidence will be included in the final submission "
+                             "package.",
+    "financial_proposal": "A separate financial proposal will be included once rates and costs "
+                          "are confirmed.",
+    "previous_work_sample": "An example of previous work will be included in the final "
+                            "submission package once sharing clearance is confirmed.",
+    "team_cv_package": "CVs of the proposed team members will be included in the final "
+                       "submission package.",
+    "team_availability": "Availability of the proposed experts will be confirmed prior to final "
+                         "submission.",
+    "submission_channel": "The submission channel is pending confirmation with the client.",
+    "deadline": "The submission deadline will be confirmed with the client.",
+    "field_roster": "ARFADA will confirm or recruit a locally based field team prior to "
+                    "mobilization.",
+    "source_inconsistency": "Values reproduced from the TOR will be reconciled against the "
+                            "approved baseline dataset and PMF during inception where "
+                            "inconsistencies exist.",
+}
+
+_PLACEHOLDER = re.compile(
+    r"\[[^\]]{0,60}(?:platform|e-?mail|address|link|portal|channel|website|url)[^\]]{0,60}\]|"
+    r"\b(?:tbd|tbc|to\s+be\s+(?:confirmed|determined|advised))\b|x{3,}", re.I)
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_URL = re.compile(r"https?://\S+|www\.\S+")
+_NAMED_CHANNEL = re.compile(
+    r"\b(?:via|through|on|using)\s+(?:the\s+)?([A-Z][\w-]*(?:\s+[A-Z][\w-]*){0,3})\s+"
+    r"(?:portal|platform|system|e-?tendering)", re.I)
+_SUBMIT_CUE = re.compile(r"\bsubmi(?:t|ssion)|\bdeadline\b|\bclosing\s+date\b|\bapply\b", re.I)
+_MONTHS = ("january february march april may june july august september october november "
+           "december").split()
+_DATE = re.compile(
+    r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(" + "|".join(m[:3] for m in _MONTHS) + r")[a-z]*\.?,?\s+(\d{4})\b"
+    r"|\b(" + "|".join(m[:3] for m in _MONTHS) + r")[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\b"
+    r"|\b(\d{4})-(\d{2})-(\d{2})\b"
+    r"|\b(\d{1,2})-(" + "|".join(m[:3] for m in _MONTHS) + r")[a-z]*-(\d{4})\b", re.I)
+_AMBIGUOUS_TIME = re.compile(r"\b12[:.]00\s*(?:a\.?m\.?|midnight)\b|\bmidnight\b", re.I)
+
+
+def _load(path: Path) -> Optional[dict]:
+    try:
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+    except Exception:
+        return None
+
+
+def _files(run_dir: Path, sub: str) -> list:
+    out = []
+    for base in (run_dir / "annexes" / sub, run_dir / sub):
+        if base.is_dir():
+            out += [str(p) for p in base.iterdir() if p.is_file()]
+    return out
+
+
+def claim(status: str, detail: str = "", *, required: bool = True, **extra) -> dict:
+    assert status in STATUSES, status
+    return {"status": status, "detail": detail, "required": required, **extra}
+
+
+# ---------------------------------------------------------------------------
+# submission channel / deadline (from the TOR's own submission text)
+# ---------------------------------------------------------------------------
+
+def _submission_text(tor: dict, requirements: list) -> str:
+    parts = list((tor or {}).get("submission_instructions") or [])
+    meta = (tor or {}).get("metadata", {}) or {}
+    for k in ("submission_requirements", "proposal_requirements", "timeline"):
+        e = meta.get(k)
+        if isinstance(e, dict) and e.get("value"):
+            parts.append(e["value"])
+    for r in requirements or []:
+        t = r.get("text") or ""
+        if r.get("category") in ("submission", "proposal_format") or _SUBMIT_CUE.search(t):
+            parts.append(t)
+    return "\n".join(parts)
+
+
+def submission_channel_state(tor: dict, requirements: list) -> dict:
+    text = _submission_text(tor, requirements)
+    if not text.strip():
+        return claim(UNVERIFIED, "the TOR gives no submission instructions")
+    m = _PLACEHOLDER.search(text)
+    if m:
+        return claim(MISSING, f"the TOR leaves the channel as a placeholder: {m.group(0)}",
+                     placeholder=m.group(0))
+    for rx in (_EMAIL, _URL):
+        m = rx.search(text)
+        if m:
+            return claim(VERIFIED, "channel stated in the TOR", value=m.group(0))
+    m = _NAMED_CHANNEL.search(text)
+    if m:
+        return claim(VERIFIED, "channel stated in the TOR", value=m.group(0))
+    return claim(UNVERIFIED, "the TOR does not state a submission channel")
+
+
+def _parse_date(m) -> Optional[_dt.date]:
+    g = m.groups()
+    try:
+        if g[0]:
+            return _dt.date(int(g[2]), [x[:3] for x in _MONTHS].index(g[1][:3].lower()) + 1, int(g[0]))
+        if g[3]:
+            return _dt.date(int(g[5]), [x[:3] for x in _MONTHS].index(g[3][:3].lower()) + 1, int(g[4]))
+        if g[9]:
+            return _dt.date(int(g[11]), [x[:3] for x in _MONTHS].index(g[10][:3].lower()) + 1, int(g[9]))
+        return _dt.date(int(g[6]), int(g[7]), int(g[8]))
+    except Exception:
+        return None
+
+
+def deadline_state(tor: dict, requirements: list, *, today: Optional[_dt.date] = None) -> dict:
+    text = _submission_text(tor, requirements)
+    cue = re.search(r"deadline|closing\s+date|no\s+later\s+than|"
+                    r"\b(?:submi\w+|send|sent|e-?mail(?:ed)?)\b[^\n]{0,160}?\b(?:by|before|until)\b"
+                    r"(?=\s*\d|\s+(?:the\s+)?\d|\s+[A-Z][a-z]+\s+\d)", text, re.I)
+    if not cue:
+        return claim(NOT_APPLICABLE, "no submission deadline stated", required=False)
+    window = text[max(0, cue.start() - 40):cue.end() + 200]
+    m = _DATE.search(window)
+    if not m:
+        return claim(MISSING, "the TOR mentions a deadline but no date could be read")
+    date = _parse_date(m)
+    today = today or _dt.date.today()
+    notes = []
+    if _AMBIGUOUS_TIME.search(window):
+        notes.append("the time (12:00 AM / midnight) is ambiguous")
+    if date and date < today:
+        notes.append("the date appears to have passed")
+    if notes:
+        return claim(PROVISIONAL, "; ".join(notes), value=m.group(0))
+    return claim(VERIFIED, "deadline stated in the TOR", value=m.group(0))
+
+
+# ---------------------------------------------------------------------------
+# build
+# ---------------------------------------------------------------------------
+
+def _required_checklist_keys(requirements: list) -> set:
+    from .submission import build_submission_checklist, MANDATORY
+    from .submission_blockers import required_items
+    keys = set(required_items(requirements))
+    for e in build_submission_checklist(requirements):
+        if e["obligation"] == MANDATORY:
+            keys.add(e["item_key"])
+    for r in requirements or []:          # "the proposal must include … CVs"
+        if r.get("category") == "proposal_format" and r.get("actor") != "CLIENT" and \
+                re.search(r"\b(?:cvs?|curriculum\s+vit|resum[eé]s?)\b", r.get("text") or "", re.I):
+            keys.add("cv_annex")
+    return keys
+
+
+def _team(run_dir: Path) -> list:
+    setup = _load(run_dir / "proposed_setup.json") or {}
+    team = setup.get("team") or []
+    return [m for m in team if isinstance(m, dict) and (m.get("staff_id") or m.get("name"))]
+
+
+def build_claim_state(run_dir: str | Path, *, knowledge=None,
+                      today: Optional[_dt.date] = None) -> dict:
+    """Compute the canonical claim state for a run (no network, no model)."""
+    from .submission_blockers import budget_state, previous_work_state, registration_state
+    run_dir = Path(run_dir)
+    tor = _load(run_dir / "tor_analysis.json") or {}
+    requirements = (_load(run_dir / "requirements.json") or {}).get("requirements", [])
+    required = _required_checklist_keys(requirements)
+    claims: dict = {}
+
+    # registration evidence
+    if "registration" in required:
+        ok, why = registration_state(run_dir)
+        claims["registration_evidence"] = claim(VERIFIED if ok else MISSING, why)
+    else:
+        ok, _ = registration_state(run_dir)
+        claims["registration_evidence"] = claim(VERIFIED if ok else NOT_APPLICABLE,
+                                                "not required by the TOR", required=False)
+    # financial proposal
+    ok, why = budget_state(run_dir)
+    partial = (run_dir / "budget.json").exists() and not ok
+    if "detailed_budget" in required:
+        claims["financial_proposal"] = claim(VERIFIED if ok else (PROVISIONAL if partial else MISSING), why)
+    else:
+        claims["financial_proposal"] = claim(VERIFIED if ok else NOT_APPLICABLE, why, required=False)
+    # previous-work sample
+    ok, why = previous_work_state(run_dir)
+    reg = _load(run_dir / "previous_work.json")
+    if "previous_work" in required:
+        claims["previous_work_sample"] = claim(
+            VERIFIED if ok else (PROVISIONAL if reg else MISSING), why)
+    else:
+        claims["previous_work_sample"] = claim(VERIFIED if ok else NOT_APPLICABLE, why,
+                                               required=False)
+    # team CV package
+    cvs = _files(run_dir, "cvs")
+    if "cv_annex" in required:
+        claims["team_cv_package"] = claim(VERIFIED if cvs else MISSING,
+                                          f"{len(cvs)} CV file(s) in annexes/cvs/",
+                                          files=len(cvs))
+    else:
+        claims["team_cv_package"] = claim(VERIFIED if cvs else NOT_APPLICABLE,
+                                          "not required by the TOR", required=False)
+    # team availability: only a confirmation record makes it VERIFIED
+    team = _team(run_dir)
+    avail = _load(run_dir / "team_availability.json") or {}
+    facts = (_load(run_dir / "team_staff_facts.json") or {})
+    facts = facts.get("facts", facts) if isinstance(facts, dict) else facts
+    facts = facts if isinstance(facts, list) else []
+    if team:
+        confirmed = [m for m in team if avail.get(str(m.get("staff_id"))) is True or any(
+            f.get("staff_id") == m.get("staff_id") and "availab" in str(f.get("attribute", "")).lower()
+            and f.get("verified") for f in facts)]
+        st = VERIFIED if len(confirmed) == len(team) else UNVERIFIED
+        claims["team_availability"] = claim(
+            st, f"{len(confirmed)}/{len(team)} proposed experts confirmed available",
+            confirmed=len(confirmed), team_size=len(team))
+    else:
+        claims["team_availability"] = claim(NOT_APPLICABLE, "no team proposed yet", required=False)
+    # submission channel + deadline (from the TOR)
+    claims["submission_channel"] = submission_channel_state(tor, requirements)
+    claims["deadline"] = deadline_state(tor, requirements, today=today)
+
+    # personnel + field roster (indexed CV evidence)
+    meta = tor.get("metadata", {}) or {}
+    country = (meta.get("country") or {}).get("value", "") if isinstance(meta.get("country"), dict) else ""
+    places = list(((meta.get("subnational_location") or {}).get("values") or []))
+    team_claims = []
+    roster = {"status": UNVERIFIED, "detail": "no staff pool available"}
+    try:
+        if knowledge is None:
+            from .knowledge import Knowledge
+            knowledge = Knowledge(run_dir=run_dir)
+        pool = list(getattr(knowledge, "_live_staff", []) or [])
+        by_id = {p.get("staff_id"): p for p in pool}
+        from .lknowledge.staff_evidence import profile_claims, field_roster_readiness
+        for m in team:
+            p = by_id.get(m.get("staff_id"), {**m})
+            team_claims.append({"staff_id": m.get("staff_id"), "name": m.get("name"),
+                                "claims": profile_claims(p, places=places, staff_facts=facts)})
+        if country:
+            r = field_roster_readiness(pool, country=country, places=places)
+            roster = {**r, "detail": (f"{r['field_cvs_in_target_area']} field CVs evidenced in "
+                                      f"the target area, {r['field_cvs_in_country']} in-country")}
+    except Exception as e:                       # never fail a run on evidence lookup
+        roster = {"status": UNVERIFIED, "detail": f"staff evidence unavailable: {e}"}
+    claims["field_roster"] = {**roster, "required": False}
+
+    inconsist = (_load(run_dir / "source_inconsistencies.json") or {}).get("items", [])
+    return {"schema": "claim_state/1",
+            "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+            "claims": claims, "team": team_claims,
+            "source_inconsistencies": inconsist,
+            "safe_wording": SAFE_WORDING}
+
+
+def write_claim_state(run_dir: str | Path, **kw) -> dict:
+    state = build_claim_state(run_dir, **kw)
+    p = Path(run_dir) / CLAIM_FILE
+    p.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    return state
+
+
+def generation_policy(state: dict) -> dict:
+    """Compact claim policy for a generation packet: what may / may not be asserted."""
+    rules = []
+    for key, c in (state.get("claims") or {}).items():
+        if c.get("status") in (VERIFIED, NOT_APPLICABLE):
+            continue
+        rules.append({"claim": key, "status": c.get("status"), "detail": c.get("detail", ""),
+                      "do_not_state_as_complete": True,
+                      "use_wording": SAFE_WORDING.get(key, "")})
+    team = []
+    for m in state.get("team") or []:
+        verified = sorted(k for k, v in (m.get("claims") or {}).items() if v.get("status") == VERIFIED)
+        unverified = sorted(k for k, v in (m.get("claims") or {}).items()
+                            if v.get("status") in (UNVERIFIED, MISSING))
+        team.append({"name": m.get("name"), "verified_attributes": verified,
+                     "do_not_claim": unverified})
+    return {"instruction": ("Write unresolved facts in provisional / future language only. "
+                            "Never describe an item below as attached, provided, included, "
+                            "confirmed, available, registered or submitted. Personnel: state "
+                            "only VERIFIED attributes as qualifications."),
+            "unresolved_claims": rules, "team": team,
+            "source_inconsistencies": state.get("source_inconsistencies", []),
+            "source_inconsistency_wording": SAFE_WORDING["source_inconsistency"]
+            if state.get("source_inconsistencies") else ""}

@@ -154,6 +154,7 @@ def rank_team(knowledge, requirements: list[dict], *, country: str = "",
     eligibility requirement.
     """
     from .lknowledge.staff_nominate import nominate, team_question, tor_context
+    from .lknowledge.staff_evidence import profile_claims, field_roster_readiness
     ctx = tor_context(tor, requirements, country)
     try:
         pool_size = getattr(knowledge, "staff_pool_size", 0) or 10000
@@ -175,14 +176,29 @@ def rank_team(knowledge, requirements: list[dict], *, country: str = "",
         "cv_likeness_score": c.get("cv_likeness_score", 0),
         # raw CV is read on demand for shortlisted people only (staff_pool.shortlist_details)
         "source_rel_path": c.get("source_rel_path", ""),
+        # v0.6.11: claim status per attribute from indexed CV evidence — only VERIFIED
+        # attributes may be written as a team qualification
+        "evidence_claims": profile_claims(c, places=sorted(ctx.get("places") or [])),
         "provisional": True,
     } for c in ranked]
     needs_question, reason = team_question(ranked, ctx)
     pool = getattr(knowledge, "staff_pool_info", None) or {}
+    try:
+        roster = field_roster_readiness(list(getattr(knowledge, "_live_staff", []) or []),
+                                        country=ctx.get("country") or country,
+                                        places=_tor_places(tor))
+    except Exception:
+        roster = {"status": "UNVERIFIED"}
     return {"team": team[:5], "team_needs_question": needs_question, "reason": reason,
             "searchable_profiles": getattr(knowledge, "staff_pool_size",
                                            pool.get("count", 0)) if knowledge else 0,
-            "staff_pool_source": pool.get("source", "")}
+            "staff_pool_source": pool.get("source", ""),
+            "field_roster": roster}
+
+
+def _tor_places(tor: Optional[dict]) -> list:
+    sub = (((tor or {}).get("metadata") or {}).get("subnational_location") or {})
+    return list(sub.get("values") or []) if isinstance(sub, dict) else []
 
 
 def rank_experience(knowledge, tor: dict, *, limit: int = 5) -> list[dict]:
@@ -219,6 +235,7 @@ def build_proposed_setup(tor: dict, recommendations: list[dict], team: dict,
         "assignment_confidence": at.get("confidence"),
         "decisions_by_category": by_cat,
         "team": team.get("team", []),
+        "field_roster": team.get("field_roster", {}),
         "relevant_experience": [
             {"project": p.get("project_name") or p.get("project_id"),
              "country": p.get("country"), "type": p.get("assignment_type"),

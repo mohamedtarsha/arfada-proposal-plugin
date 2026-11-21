@@ -458,6 +458,24 @@ def validate_candidate(packet: dict, candidate: dict) -> dict:
         except Exception:
             pass
 
+    # --- claim gating (v0.6.11): no unresolved fact written as complete ---
+    claim_state = packet.get("claim_state")
+    if claim_state:
+        try:
+            from .claim_language import section_issues
+            for issue in section_issues(candidate, claim_state, section_id=packet["section_id"]):
+                if issue.kind == "PERSONNEL_UNVERIFIED":
+                    errors.append(f"UNVERIFIED_PERSONNEL_CLAIM: {issue.detail} — "
+                                  f"'{issue.sentence[:120]}'. State only CV-verified "
+                                  "qualifications.")
+                else:
+                    fix = (f" Use: \"{issue.replacement}\"" if issue.replacement
+                           else " Rewrite in provisional / future language.")
+                    errors.append(f"CLAIM_CONTRADICTION[{issue.claim}={issue.status}]: "
+                                  f"'{issue.sentence[:120]}'.{fix}")
+        except Exception:
+            pass
+
     valid = not errors and not failed_slots
     status = "READY" if valid else "FAILED"
     return _result(valid, errors, warnings, failed_slots, status)

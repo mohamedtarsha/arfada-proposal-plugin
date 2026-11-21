@@ -6,6 +6,49 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.6.11] — 2026-11-21
+
+### Production hardening — no claim may contradict the evidence or package state
+- **Claim state model** (`engine/tor/claim_state.py` → `claim_state.json`): VERIFIED /
+  PROVISIONAL / UNVERIFIED / MISSING / NOT_APPLICABLE for registration evidence,
+  financial proposal, previous-work sample, team CV package, team availability,
+  submission channel (placeholder → MISSING), deadline (ambiguous / passed →
+  PROVISIONAL), field roster and per-person attributes — built only from the run's
+  own artifacts. `analyze_tor` keeps the TOR's submission-instruction sentences.
+- **Generation claim gating**: packets carry `claim_state` + `claim_policy` (safe
+  wording per unresolved fact); `validate_candidate` rejects definitive language for
+  unresolved facts (`CLAIM_CONTRADICTION`) and unverified personnel qualifications
+  (`UNVERIFIED_PERSONNEL_CLAIM`). Pre-export re-validation uses the live state.
+- **Staff evidence gating** (`lknowledge/staff_evidence.py`): years, FSL, evaluation,
+  country / local, safeguarding / gender / protection, tools and languages each get a
+  status from CV evidence text (VERIFIED), ARFADA's filing folder (PROVISIONAL) or
+  nothing (UNVERIFIED); a job title alone is never sector expertise. Nomination no
+  longer credits theme / evaluation / geography from parsed job titles; team entries
+  carry `evidence_claims`. **Field-roster readiness** needs usable field CVs in the
+  target area (VERIFIED), not just a country folder.
+- **TOR source-inconsistency register** (`engine/tor/source_consistency.py` →
+  `source_inconsistencies.json`): percentages that do not reconcile, category counts
+  above a stated total, overlapping ranges, mixed stage terminology. Logged as
+  SOURCE_INCONSISTENCY (INFO), values never changed.
+- **Canonical submission blockers** (`engine/tor/canonical_blockers.py`): one blocker per
+  unresolved item (FINANCIAL_PROPOSAL, PREVIOUS_WORK_SAMPLE, REGISTRATION_EVIDENCE,
+  TEAM_CV_PACKAGE, TEAM_AVAILABILITY, SUBMISSION_CHANNEL, DEADLINE_CONFIRMATION,
+  OTHER:…); duplicates collapse with their sources kept; `proposal_final.docx` and the
+  technical proposal itself are export steps, never substantive blockers.
+- **Final-language sanitizer** (`engine/tor/claim_language.py`, used by `docx_render`):
+  client-style outputs rewrite contradicting sentences to the safe wording; a claim
+  with no deterministic rewrite blocks the client export (the working draft still
+  renders and reports it).
+- **Semantic consistency QA** (separate from numeric QA): CLAIM_CONSISTENCY,
+  PERSONNEL_EVIDENCE, SEMANTIC_CONSISTENCY (Impact Evaluation vs contribution-only
+  inference, roster claims without evidence), SOURCE_INCONSISTENCY.
+- Draft v1/v2 still render with unresolved items (provisional wording); submission
+  package stays NOT_READY until every canonical blocker is resolved.
+- Regression tests: `tests/test_v0611_claim_gating.py` (generic + South Darfur + an
+  unrelated Iraq WASH TOR; optional `ARFADA_REAL_TOR`).
+
+---
+
 ## [0.6.10] — 2026-11-21
 
 ### Fixed — real-TOR regression (original South Darfur ZOA PDF failed on v0.6.9)
