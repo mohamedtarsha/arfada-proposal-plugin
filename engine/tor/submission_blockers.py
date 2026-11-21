@@ -8,13 +8,16 @@ state and reports, for TOR-required items, what is still unresolved:
 
 * financial proposal / detailed budget — no reconciled ``budget.json`` and no budget
   file in the package (e.g. rates not provided);
-* example of previous work — nothing registered, or sharing clearance not confirmed.
+* example of previous work — nothing registered, or sharing clearance not confirmed;
+* evidence of registration (v0.6.10) — the TOR asks for it and no registration file
+  is in the package.
 
 Each is a FINAL_SUBMISSION_BLOCKER: proposal_draft_v1.docx is still produced.
 """
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -22,7 +25,11 @@ from .submission import classify_submission_requirement, MANDATORY
 
 # requirement categories whose items can name a physical submission deliverable
 _ITEM_CATEGORIES = ("submission", "proposal_format")
-_TRACKED = ("detailed_budget", "previous_work")
+_TRACKED = ("detailed_budget", "previous_work", "registration")
+# registration is often an eligibility line ("Evidence of registration as a firm")
+_REGISTRATION_ASK = re.compile(
+    r"\b(?:evidence|proof|copy|certificate)\s+of\s+(?:\w+\s+){0,2}?registration\b|"
+    r"\bregistration\s+(?:certificate|documents?|evidence)\b", re.I)
 
 
 def _load(path: Path) -> Optional[dict]:
@@ -44,7 +51,13 @@ def required_items(requirements: list) -> dict:
     """TOR-required tracked items: item_key -> checklist entry (MANDATORY only)."""
     found: dict = {}
     for r in requirements or []:
-        if r.get("actor") == "CLIENT" or r.get("category") not in _ITEM_CATEGORIES:
+        if r.get("actor") == "CLIENT":
+            continue
+        if r.get("category") not in _ITEM_CATEGORIES:
+            if _REGISTRATION_ASK.search(r.get("text") or ""):
+                entry = classify_submission_requirement(r)
+                entry.update(item_key="registration", obligation=MANDATORY)
+                found.setdefault("registration", entry)
             continue
         entry = classify_submission_requirement(r)
         if entry["item_key"] in _TRACKED and entry["obligation"] == MANDATORY:
@@ -85,6 +98,12 @@ def previous_work_state(run_dir: Path) -> tuple[bool, str]:
     return False, "no example selected or cleared for sharing"
 
 
+def registration_state(run_dir: Path) -> tuple[bool, str]:
+    files = _files(run_dir, "registration")
+    return (True, "registration file in package") if files else \
+        (False, "no registration evidence in the package")
+
+
 def pending_submission_blockers(run_dir: str | Path, requirements: list) -> list:
     """FINAL_SUBMISSION_BLOCKER gaps for unresolved TOR-required budget / previous work."""
     run_dir = Path(run_dir)
@@ -106,4 +125,12 @@ def pending_submission_blockers(run_dir: str | Path, requirements: list) -> list
                         "message": f"Previous-work example pending — {why}",
                         "recommended_action": "Choose the report and confirm ARFADA may share it "
                                               "(previous_work.py register … --confirm-clearance)."})
+    if "registration" in items:
+        ok, why = registration_state(run_dir)
+        if not ok:
+            out.append({"check": "SUBMISSION_PENDING", "item_key": "registration",
+                        "requirement_id": items["registration"]["requirement_id"],
+                        "message": f"Registration evidence pending — {why}",
+                        "recommended_action": "Place the registration certificate under "
+                                              "annexes/registration/."})
     return out

@@ -480,6 +480,51 @@ def _is_table_requirement(ct: str) -> bool:
                                   "deliverable", "inception", "report", "weight", "%", "points"))
 
 
+# v0.6.10: a submission / application list ("Interested parties must submit the
+# following: 1. Technical Proposal … 2. Financial Proposal …"). PDF extraction often
+# types each numbered line as a HEADING; inside such a list they are requirements.
+_SUBMISSION_INTRO = re.compile(
+    r"\b(?:submission\s+requirements?|application\s+requirements?|proposal\s+requirements?|"
+    r"required\s+documents?|(?:must|shall|should)\s+(?:submit|include|contain|provide)\s+"
+    r"(?:the\s+following|as\s+follows)|(?:proposals?|applications?|bids?|offers?)\s+"
+    r"(?:must|shall|should)\s+(?:include|contain|consist\s+of)|"
+    r"interested\s+(?:parties|applicants|firms|consultants)\s+(?:must|shall|should|are\s+"
+    r"requested\s+to)\s+submit)\b", re.I)
+_NUMBERED_ITEM = re.compile(r"^\s*\(?(\d{1,2})[.)]\s+(\S.*)$")
+
+
+def _submission_list_items(blocks: list) -> dict:
+    """{block index: (item text, continuation indices)} for numbered HEADING blocks
+    that sit inside a submission / application list. Scoped: the list must be
+    introduced by an explicit submission cue and ends at the first block that is
+    neither a numbered item nor a lower-case continuation line."""
+    out: dict = {}
+    active = False
+    i = 0
+    while i < len(blocks):
+        b = blocks[i]
+        bt = b.get("block_type"); txt = (b.get("plain_text") or "").strip()
+        m = _NUMBERED_ITEM.match(txt) if bt == "HEADING" else None
+        if active and m:
+            item = m.group(2).strip()
+            cont = []
+            j = i + 1
+            while j < len(blocks) and blocks[j].get("block_type") == "PARAGRAPH" and \
+                    re.match(r"^[a-z(]", (blocks[j].get("plain_text") or "").strip()):
+                item = f"{item} {(blocks[j].get('plain_text') or '').strip()}"
+                cont.append(j)
+                j += 1
+            out[i] = (item, cont)
+            i = j
+            continue
+        if bt in ("PARAGRAPH", "HEADING", "LIST_ITEM", "OTHER") and txt:
+            active = bool(_SUBMISSION_INTRO.search(txt)) and (
+                txt.rstrip().endswith(":") or bt == "HEADING" or
+                bool(re.search(r"following\s*:?\s*$", txt, re.I)))
+        i += 1
+    return out
+
+
 def extract_requirements(store, aid: str, tor_fields: list[TORField] | None = None) -> list[TORRequirement]:
     """Section-INDEPENDENT, table-AWARE, atomic requirement extraction.
 
@@ -492,7 +537,8 @@ def extract_requirements(store, aid: str, tor_fields: list[TORField] | None = No
     reqs: list[TORRequirement] = []
     seen: set[str] = set()
 
-    def emit(text: str, did: str, heading: str, method: str, seq, page, locator: str, group: str):
+    def emit(text: str, did: str, heading: str, method: str, seq, page, locator: str, group: str,
+             category: str = ""):
         text = text.strip()
         if len(text) < 8:
             return
@@ -501,7 +547,7 @@ def extract_requirements(store, aid: str, tor_fields: list[TORField] | None = No
             return
         seen.add(key)
         mand, modality = _modality(text)
-        category = _classify(text, heading)
+        category = category or _classify(text, heading)
         reqs.append(TORRequirement(
             req_id=_rid(aid, did, seq if seq is not None else locator, key[:40]),
             assignment_id=aid, tor_document_id=did, text=text[:1000], category=category,
@@ -513,8 +559,18 @@ def extract_requirements(store, aid: str, tor_fields: list[TORField] | None = No
     for doc in store.documents(aid, ("TOR", "TOR_ANNEX")):
         did = doc["document_id"]
         cur_heading = ""
-        for b in store.blocks(did):
+        all_blocks = list(store.blocks(did))
+        sub_items = _submission_list_items(all_blocks)
+        sub_skip = {j for _it, cont in sub_items.values() for j in cont}
+        for bi, b in enumerate(all_blocks):
             bt = b["block_type"]; txt = (b["plain_text"] or "").strip()
+            if bi in sub_items:                     # numbered submission-list item
+                item = sub_items[bi][0]
+                emit(item, did, "Submission Requirements", "LIST", b["sequence"],
+                     _block_page(b), "", "", category="submission")
+                continue
+            if bi in sub_skip:                      # continuation already merged
+                continue
             if bt == "HEADING":
                 cur_heading = txt
                 continue

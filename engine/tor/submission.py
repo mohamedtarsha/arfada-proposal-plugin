@@ -89,6 +89,12 @@ def classify_submission_requirement(req: dict) -> dict:
     """Full checklist entry for one requirement dict (req_id, text, mandatory…)."""
     text = req.get("text") or req.get("requirement") or ""
     key, label = identify_item(text)
+    if key == "other":
+        # keep the TOR's own item name ("Risk Mitigation Plan: …" -> "Risk Mitigation Plan")
+        head = re.split(r"\s*:\s*", text.strip(), maxsplit=1)[0]
+        words = head.split()
+        if text and words:
+            label = " ".join(words[:8]).rstrip(".,;") + ("…" if len(words) > 8 else "")
     obligation = classify_obligation(text, mandatory_flag=req.get("mandatory", True))
     return {
         "requirement_id": req.get("req_id") or req.get("requirement_id") or "",
