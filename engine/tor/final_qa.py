@@ -501,8 +501,13 @@ def _check_decisions(ctx) -> list[Finding]:
                                    blocks_client=False))
             # a conflicting below-minimum number near the same requirement
             if mn is not None:
-                below = [n for n in _numbers_near(text, r"\b(?:kii|fgd|interview|survey|respondent)s?\b")
-                         if n < mn and n != 0]
+                # only CURRENT counts of this decision's metric (not past-project
+                # statistics or breakdown rows) can conflict with its minimum
+                from .numeric_claims import decision_targets
+                metric = next((m for m, v in decision_targets(
+                    {"decisions": [{**d, "decision_status": "RESOLVED"}]}).items()), None)
+                cur = _current_claims(ctx).get(metric, []) if metric else []
+                below = [c.value for c in cur if c.value < mn and c.value != 0]
                 if below and str(iv) in text:
                     out.append(Finding("DECISION_COMPLIANCE", CRITICAL, "decision_conflict",
                                        f"A value below the TOR minimum {mn} appears alongside the approved {iv}",
@@ -585,25 +590,48 @@ def _verified_fact_numbers(ctx) -> set:
 # CHECK: contradictions
 # ---------------------------------------------------------------------------
 
-_METRIC_PATS = {
-    "KII": r"\bkiis?\b|\bkey\s+informant", "FGD": r"\bfgds?\b|\bfocus\s+group",
-    "survey": r"\bsurveys?\b|\brespondents?\b",
-}
+def _current_claims(ctx) -> dict:
+    """Current-methodology counts per metric (historical/reference numbers excluded)."""
+    from .numeric_claims import current_claims
+    exclude = {int(n) for n in _verified_fact_numbers(ctx)}   # ARFADA portfolio metrics
+    return current_claims(ctx["gen_sections"], exclude_values=exclude)
 
 
 def _check_contradictions(ctx) -> list[Finding]:
+    """Section- and entity-aware numeric consistency.
+
+    Only the proposal's CURRENT methodology counts are compared — past-project
+    statistics, ARFADA portfolio totals, reference values (minimum/baseline/reserve)
+    and breakdown rows are excluded; breakdown tables are summed and must equal the
+    stated total. When the run has an approved or provisional decision for a
+    metric, every current count must equal it.
+    """
+    from .numeric_claims import decision_targets
     out = []
-    per_metric: dict[str, set] = {k: set() for k in _METRIC_PATS}
-    for sid, cand in ctx["gen_sections"].items():
-        text = _section_text(cand)
-        for metric, pat in _METRIC_PATS.items():
-            for n in _numbers_near(text, pat):
-                if 1 <= n <= 100000:
-                    per_metric[metric].add(n)
-    for metric, vals in per_metric.items():
-        if len(vals) > 1:
+    claims = _current_claims(ctx)
+    targets = decision_targets(ctx.get("register"))
+    for metric, items in claims.items():
+        if not items:
+            continue
+        vals = sorted({c.value for c in items})
+        target = targets.get(metric)
+        if target is not None:
+            wrong = sorted({c.value for c in items if c.value != target})
+            if wrong:
+                where = sorted({c.section_id for c in items if c.value != target})
+                out.append(Finding("CONTRADICTION", ERROR, "numeric_contradiction",
+                                   f"{metric} count {wrong} differs from the current-run "
+                                   f"decision ({target})",
+                                   evidence="; ".join(c.snippet for c in items
+                                                      if c.value != target)[:200],
+                                   section_id=where[0] if where else "",
+                                   recommended_action=f"Use {target} for the {metric} total "
+                                                      "(or edit the decision)."))
+        elif len(vals) > 1:
             out.append(Finding("CONTRADICTION", ERROR, "numeric_contradiction",
-                               f"Conflicting {metric} counts across sections: {sorted(vals)}",
+                               f"Conflicting current {metric} counts across sections: {vals}",
+                               evidence="; ".join(f"{c.section_id}: {c.value}"
+                                                  for c in items)[:200],
                                recommended_action="Align all sections to the approved count."))
     # entity contradiction: client/country
     meta = ctx["tor"].get("metadata", {})

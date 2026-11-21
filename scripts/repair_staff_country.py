@@ -41,7 +41,14 @@ def main(argv=None) -> int:
         _out({"ok": True, "mode": "CHECK", "profiles": len(profiles),
               **SC.summarize(profiles)})
         return 0
-    _out({"ok": True, "mode": "REPAIR", **SC.repair_staff_index(cache)})
+    result = SC.repair_staff_index(cache)
+    # keep the Knowledge-folder copy of the index in step (never shrinks it)
+    from engine.tor.lknowledge.local_config import get_knowledge_root
+    from engine.tor.lknowledge.staff_pool import publish_portable_index
+    root = get_knowledge_root()
+    portable = publish_portable_index(cache, root) if root else {"published": False}
+    _out({"ok": True, "mode": "REPAIR", **result,
+          "portable_index": portable.get("published", False)})
     return 0
 
 

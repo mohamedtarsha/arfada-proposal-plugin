@@ -300,6 +300,12 @@ Present candidates, let the user choose, record the approved `staff_id` in the
 Decision Register before generation uses that person's facts. Never invent staff
 names — use "To be nominated".
 
+Team ranking searches the **persisted staff index** (all indexed profiles), loaded
+automatically from the user cache or the Knowledge folder's `.arfada-index/`. Never
+copy or transfer the raw `Staff CVs` folder into a session. Read raw CV text only
+for shortlisted candidates (`staff_pool.shortlist_details`). `fast_proposal.py setup`
+reports `staff_pool.searchable_profiles`.
+
 ---
 
 ## Winning Proposal Library (ARFADA Writing DNA — STYLE ONLY)

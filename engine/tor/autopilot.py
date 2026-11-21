@@ -161,6 +161,8 @@ def rank_team(knowledge, requirements: list[dict], *, country: str = "",
         "country_pool": c.get("country_pool", ""),
         "years_experience": c.get("years_experience"),
         "match_score": c.get("match_score", 0),
+        # raw CV is read on demand for shortlisted people only (staff_pool.shortlist_details)
+        "source_rel_path": c.get("source_rel_path", ""),
         "provisional": True,
     } for c in candidates]
     needs_question = False
@@ -171,7 +173,11 @@ def rank_team(knowledge, requirements: list[dict], *, country: str = "",
         reason = "Top two candidates are closely ranked — confirm the lead."
     if not team:
         reason = "No CV candidates available in Knowledge (team is a gap, not a blocker)."
-    return {"team": team[:5], "team_needs_question": needs_question, "reason": reason}
+    pool = getattr(knowledge, "staff_pool_info", None) or {}
+    return {"team": team[:5], "team_needs_question": needs_question, "reason": reason,
+            "searchable_profiles": getattr(knowledge, "staff_pool_size",
+                                           pool.get("count", 0)) if knowledge else 0,
+            "staff_pool_source": pool.get("source", "")}
 
 
 def rank_experience(knowledge, tor: dict, *, limit: int = 5) -> list[dict]:

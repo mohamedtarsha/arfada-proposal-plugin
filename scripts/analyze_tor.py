@@ -302,7 +302,7 @@ def analyze(tor_path: str | Path, output_root: str | Path | None = None) -> dict
         }
 
     # --- assignment type inference (Phase 4) -------------------------------
-    atype = infer_assignment_type(metadata, enriched_reqs)
+    atype = infer_assignment_type(metadata, enriched_reqs, context_aware=True)
     assignment_type = {
         "assignment_type": atype.assignment_type,
         "label": atype.label,

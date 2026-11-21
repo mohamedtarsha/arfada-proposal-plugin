@@ -84,7 +84,7 @@ def create_snapshot(run_dir: Path, *, cache: Optional[Cache] = None,
         else:
             source_mode = origin
         projects_doc = cache.projects()
-        staff_doc = cache.staff()
+        staff_doc = _full_staff_doc(cache)
         company_doc = cache.company()
         brand_doc = cache.brand()
     else:
@@ -144,6 +144,21 @@ def snapshot_metrics(run_dir: Path) -> dict:
     if not p.exists():
         return {}
     return json.loads(p.read_text(encoding="utf-8")).get("metrics", {})
+
+
+def _full_staff_doc(cache: Cache) -> Optional[dict]:
+    """The staff index to freeze: the largest persisted pool, not a partial cache."""
+    doc = cache.staff()
+    try:
+        from ..lknowledge.staff_pool import load_staff_pool
+        pool = load_staff_pool()
+        if pool["count"] > len((doc or {}).get("profiles", [])):
+            return {"synced_at": pool.get("synced_at", ""),
+                    "source": {"type": pool["source"], "path": pool.get("path", "")},
+                    "count": pool["count"], "profiles": pool["profiles"]}
+    except Exception:
+        pass
+    return doc
 
 
 def snapshot_staff(run_dir: Path) -> list:
