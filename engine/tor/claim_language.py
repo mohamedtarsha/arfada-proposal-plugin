@@ -45,6 +45,13 @@ CLAIM_PATTERNS: dict = {
         rf"[^.;\n]{{0,60}}\b{_IS}\s+(?:also\s+)?{_DONE}\b",
         r"\b(?:attached|enclosed|annexed|appended)\b[^.;\n]{0,40}\b(?:examples?|samples?)\s+of\s+"
         r"(?:previous|past|prior)\s+work\b",
+        # v0.6.12: "the example report accompanies this proposal as a separate annex"
+        r"\b(?:report|example|sample)\b[^.;\n]{0,120}\baccompan(?:y|ies|ied)\s+(?:this|the|our)\s+"
+        r"(?:proposal|submission|offer|bid|application)\b",
+        r"\b(?:example|sample|previous[- ]work|past[- ]work)\b[^.;\n]{0,80}\bas\s+an?\s+(?:separate\s+)?"
+        r"annex\b",
+        r"\b(?:example|sample)\s+(?:evaluation\s+)?report\b[^.;\n]{0,60}\b(?:is|are|has\s+been|have\s+been)"
+        r"\s+(?:also\s+)?(?:attached|enclosed|annexed|provided|included|appended|submitted)\b",
     ], True),
     "team_cv_package": ([
         rf"\bCVs?\b[^.;\n]{{0,60}}\b{_IS}\s+(?:also\s+)?{_DONE}\b",
@@ -83,7 +90,8 @@ _CONTRIBUTION_ONLY = re.compile(
     r"\bwithout\s+a\s+counterfactual\b|\bno\s+counterfactual\b|\bdoes\s+not\s+attribute\b|"
     r"\bcontribution[- ]focused\b|\bcontribution,?\s+(?:not|rather\s+than)\s+attribution\b", re.I)
 
-_SENT = re.compile(r"[^.;!?\n]*(?:[.;!?\n]|$)")
+# an initial ("M." in "Ahmed M. A. Elamin") or a decimal point is not a sentence end
+_SENT = re.compile(r"(?:[^.;!?\n]|(?<=\b[A-Z])\.|\.(?=\d))*(?:[.;!?\n]|$)")
 
 
 @dataclass
@@ -96,11 +104,12 @@ class ClaimIssue:
     replacement: str = ""
     kind: str = "CLAIM_CONTRADICTION"
     detail: str = ""
+    match: str = ""          # exact substring to replace (name rewrites)
 
     def to_dict(self) -> dict:
         return {k: getattr(self, k) for k in ("kind", "claim", "status", "sentence",
                                               "section_id", "rewritable", "replacement",
-                                              "detail")}
+                                              "detail", "match")}
 
 
 def _status(state: dict, key: str) -> str:
@@ -152,11 +161,13 @@ def find_claim_issues(text: str, state: dict, *, section_id: str = "") -> list:
     return issues
 
 
-def _team_tokens(member: dict) -> list:
-    name = str(member.get("name") or "")
-    name = re.sub(r"\b(?:cv|resume|updated|final|dr|eng|mr|mrs|ms|\d{4})\b", " ", name, flags=re.I)
-    toks = [t for t in re.findall(r"[A-Z][a-z]{2,}", name)]
-    return toks[:3]
+def _canonical(member: dict) -> str:
+    """Full canonical name of a team member (v0.6.12 stable identity)."""
+    name = member.get("canonical_name")
+    if name:
+        return " ".join(str(name).split())
+    from .lknowledge.staff_identity import canonical_identity
+    return canonical_identity({"source_file_name": str(member.get("name") or "")})["canonical_name"]
 
 
 _QUALIFICATION_CUES = {
@@ -172,21 +183,35 @@ _QUALIFICATION_CUES = {
 def find_personnel_issues(text: str, state: dict, *, section_id: str = "") -> list:
     """A named team member's qualification stated without VERIFIED CV evidence."""
     issues = []
+    from .lknowledge.staff_identity import mentions, abbreviation_pattern
     for m in (state or {}).get("team") or []:
-        toks = _team_tokens(m)
-        if not toks:
+        full = _canonical(m)
+        if len(full.split()) < 2:
             continue
         claims = m.get("claims") or {}
         for sent in _sentences(text):
-            if not any(re.search(rf"\b{re.escape(t)}\b", sent) for t in toks):
+            # a sentence is about this person only if it names them in full (or in an
+            # initials form of THEIR full name) — shared tokens never link two people
+            seen = mentions(sent, full)
+            if not seen:
                 continue
+            if seen == "SHORT":
+                pat = abbreviation_pattern(full)
+                hit = pat.search(" ".join(sent.split())) if pat else None
+                if hit and hit.group(0) != full:
+                    issues.append(ClaimIssue("canonical_name", m.get("canonical_name_status",
+                                                                     "PROVISIONAL"),
+                                             sent.strip(), section_id, True, full,
+                                             "STAFF_NAME_NOT_CANONICAL",
+                                             f"render the full name '{full}', not '{hit.group(0)}'",
+                                             hit.group(0)))
             y = re.search(r"\b(\d{1,2})\s*\+?\s*(?:years?|yrs)\b", sent, re.I)
             yc = claims.get("years_experience") or {}
             if y and (yc.get("status") != VERIFIED or int(y.group(1)) > int(yc.get("value") or 0)):
                 issues.append(ClaimIssue("years_experience", yc.get("status", "UNVERIFIED"),
                                          sent.strip(), section_id, False, "",
                                          "PERSONNEL_UNVERIFIED",
-                                         f"{m.get('name')}: years not verified in the CV"))
+                                         f"{full}: years not verified in the CV"))
                 continue
             if not re.search(r"\b(?:experience|expertise|expert|specialist|background|track\s+record|"
                              r"skilled|proficient|qualified)\b", sent, re.I):
@@ -196,7 +221,7 @@ def find_personnel_issues(text: str, state: dict, *, section_id: str = "") -> li
                 if re.search(cue, sent, re.I) and c.get("status") not in (VERIFIED, None):
                     issues.append(ClaimIssue(attr, c.get("status", "UNVERIFIED"), sent.strip(),
                                              section_id, False, "", "PERSONNEL_UNVERIFIED",
-                                             f"{m.get('name')}: {attr} not verified in the CV"))
+                                             f"{full}: {attr} not verified in the CV"))
                     break
     return issues
 
@@ -251,6 +276,7 @@ def section_issues(candidate: dict, state: dict, *, section_id: str = "",
     for _p, text in candidate_texts(candidate):
         issues += find_claim_issues(text, state, section_id=section_id)
         issues += find_personnel_issues(text, state, section_id=section_id)
+        issues += find_duration_issues(text, state, section_id=section_id)
     if contribution_context and _CONTRIBUTION_ONLY.search(contribution_context):
         for _p, text in candidate_texts(candidate):
             issues += find_semantic_issues({section_id: text + "\n" + contribution_context})
@@ -272,8 +298,19 @@ def sanitize_candidate(candidate: dict, state: dict, *, section_id: str = "",
                 changes.append(issue.to_dict())
             else:
                 residual.append(issue.to_dict())
-        for issue in find_personnel_issues(text, state, section_id=section_id):
+        for issue in find_personnel_issues(new, state, section_id=section_id):
+            if issue.kind == "STAFF_NAME_NOT_CANONICAL" and issue.match and issue.replacement:
+                # render the full canonical name instead of an initials form
+                pat = re.compile(r"\s+".join(re.escape(t) for t in issue.match.split()))
+                fixed = pat.sub(issue.replacement, new)
+                if fixed != new:
+                    changes.append(issue.to_dict())
+                    new = fixed
+                continue
             residual.append(issue.to_dict())
+        for issue in find_duration_issues(new, state, section_id=section_id):
+            new = new.replace(issue.match, issue.replacement)
+            changes.append(issue.to_dict())
         if contribution and _IMPACT.search(new):
             fixed = rewrite_impact(new)
             if fixed != new:
@@ -297,3 +334,35 @@ def sanitize_candidate(candidate: dict, state: dict, *, section_id: str = "",
             seen.add(k)
             res.append(r)
     return cand, changes, res
+
+
+# ---------------------------------------------------------------------------
+# v0.6.12: keep the TOR's duration wording ("30 days" is not "30 working days")
+# ---------------------------------------------------------------------------
+
+_DURATION_QUALIFIED = re.compile(
+    r"\b(\d{1,3})\s+(working|calendar|business|consecutive)\s+(days?|weeks?|months?)\b", re.I)
+
+
+def find_duration_issues(text: str, state: dict, *, section_id: str = "") -> list:
+    """'N working days' where the TOR only ever says 'N days' (wording drift)."""
+    mentions = (state or {}).get("tor_durations") or []
+    if not mentions:
+        return []
+    tor = set()
+    for m in mentions:
+        try:
+            n, q, u = str(m).split("|")
+            tor.add((n, q, u))
+        except ValueError:
+            continue
+    issues = []
+    for m in _DURATION_QUALIFIED.finditer(text or ""):
+        n, q, u = m.group(1), m.group(2).lower(), m.group(3).lower().rstrip("s")
+        if (n, q, u) in tor or (n, "", u) not in tor:
+            continue                        # the TOR uses this qualifier, or never says N u
+        plain = f"{n} {m.group(3)}"
+        issues.append(ClaimIssue("duration_wording", "TOR_WORDING", m.group(0), section_id,
+                                 True, plain, "DURATION_WORDING",
+                                 f"the TOR says '{n} {u}s', not '{m.group(0)}'", m.group(0)))
+    return issues

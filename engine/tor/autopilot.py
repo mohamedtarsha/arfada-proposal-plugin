@@ -155,16 +155,47 @@ def rank_team(knowledge, requirements: list[dict], *, country: str = "",
     """
     from .lknowledge.staff_nominate import nominate, team_question, tor_context
     from .lknowledge.staff_evidence import profile_claims, field_roster_readiness
+    from .lknowledge.staff_identity import canonical_identity, same_person
+    from .lknowledge.staff_role_fit import (detect_roles, assign_roles, role_team_question,
+                                            ROLE_LABEL)
     ctx = tor_context(tor, requirements, country)
     try:
         pool_size = getattr(knowledge, "staff_pool_size", 0) or 10000
         candidates = knowledge.search_staff(country=country or None, limit=pool_size)
     except Exception:
         candidates = []
-    ranked = nominate(candidates, ctx, limit=limit)
+    # v0.6.12 role-specific ranking: one best distinct person per TOR role
+    roles = detect_roles(requirements)
+    role_shortlists: dict = {}
+    evidence_stats: dict = {}
+    if roles:
+        pool = nominate(candidates, ctx, limit=400)
+        # CV-text role evidence for the TOR's own candidate pool only (in-country and
+        # expert-pool CVs) — snippets, cached; never the whole library
+        from .lknowledge.staff_country import matches_country
+        from .lknowledge.staff_role_fit import attach_role_evidence
+        shortlist = [c for c in pool if c.get("document_type") == "CV" and (
+            (ctx.get("country") and matches_country(c, ctx["country"])) or c.get("country_pool"))]
+        evidence_stats = attach_role_evidence(shortlist[:300])
+        ra = assign_roles(pool, roles, ctx)
+        chosen = [ra["picks"][r] for r in roles if r in ra["picks"]]
+        rest = [c for c in pool if not any(same_person(c, x) for x in chosen)]
+        ranked = (chosen + rest)[:limit]
+        needs_question, reason = role_team_question(ra["ranked"].get("TEAM_LEADER", []), ctx)
+        for r, lst in ra["shortlist"].items():
+            role_shortlists[r] = [{**canonical_identity(c), "role_fit_score": c["role_fit_score"],
+                                   "role_fit_breakdown": c["role_fit_breakdown"]} for c in lst]
+    else:
+        ranked = nominate(candidates, ctx, limit=limit)
+        needs_question, reason = team_question(ranked, ctx)
     team = [{
         "staff_id": c.get("staff_id"),
-        "name": c.get("name"),
+        # stable identity: staff_profile_id + full canonical name (never initials)
+        **canonical_identity(c),
+        "name": canonical_identity(c)["canonical_name"] or c.get("name"),
+        "role": ROLE_LABEL.get(c.get("role", ""), "") if c.get("role") else "",
+        "role_fit_score": c.get("role_fit_score"),
+        "role_fit_breakdown": c.get("role_fit_breakdown", {}),
         "roles": c.get("roles", []),
         "country": c.get("country", ""),
         "country_pool": c.get("country_pool", ""),
@@ -181,7 +212,6 @@ def rank_team(knowledge, requirements: list[dict], *, country: str = "",
         "evidence_claims": profile_claims(c, places=sorted(ctx.get("places") or [])),
         "provisional": True,
     } for c in ranked]
-    needs_question, reason = team_question(ranked, ctx)
     pool = getattr(knowledge, "staff_pool_info", None) or {}
     try:
         roster = field_roster_readiness(list(getattr(knowledge, "_live_staff", []) or []),
@@ -193,7 +223,10 @@ def rank_team(knowledge, requirements: list[dict], *, country: str = "",
             "searchable_profiles": getattr(knowledge, "staff_pool_size",
                                            pool.get("count", 0)) if knowledge else 0,
             "staff_pool_source": pool.get("source", ""),
-            "field_roster": roster}
+            "field_roster": roster,
+            "tor_roles": roles,
+            "role_shortlists": role_shortlists,
+            "role_evidence": evidence_stats}
 
 
 def _tor_places(tor: Optional[dict]) -> list:

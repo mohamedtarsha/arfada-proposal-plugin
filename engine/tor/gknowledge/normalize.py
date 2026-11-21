@@ -322,14 +322,17 @@ def normalize_cv(*, text: str, file_id: str, file_name: str, country: str = "",
 
 
 def promote_staff_fact(*, name: str, attribute: str, value: Any, source_file: str,
-                       quote: str = "", confidence: str = "MEDIUM") -> dict:
+                       quote: str = "", confidence: str = "MEDIUM",
+                       staff_profile_id: str = "") -> dict:
     """Promote a fact read directly from a CV into a structured staff fact (§4).
 
     When the session reads a CV and accepts a claim (role, years, education,
-    language, availability), it must be promoted to a provenance-bearing staff
-    fact BEFORE the proposal may use it — no named-person claim without evidence.
+    language, availability, full_name), it must be promoted to a provenance-bearing
+    staff fact BEFORE the proposal may use it — no named-person claim without evidence.
+    v0.6.12: pass ``staff_profile_id`` (the index staff_id) so the fact attaches to the
+    canonical identity, never to a name.
     """
-    staff_id = "cv_" + hashlib.sha1((source_file or name).encode()).hexdigest()[:12]
+    staff_id = staff_profile_id or "cv_" + hashlib.sha1((source_file or name).encode()).hexdigest()[:12]
     return {
         "fact_id": "stafffact_" + hashlib.sha1(
             f"{staff_id}|{attribute}|{value}".encode()).hexdigest()[:12],

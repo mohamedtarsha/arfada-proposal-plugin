@@ -723,17 +723,28 @@ When the TOR requests an example of previous work:
 
 ```bash
 python "<plugin_root>/scripts/previous_work.py" validate "<file>"
-python "<plugin_root>/scripts/previous_work.py" register "<run_dir>" "<file>" [--confirm-clearance]
+python "<plugin_root>/scripts/previous_work.py" register "<run_dir>" "<file>"
+python "<plugin_root>/scripts/previous_work.py" clear "<run_dir>" --note "<the user's exact permission words>"
 ```
 
 - The file must validate as an actual deliverable (evaluation / endline / final
   evaluation / assessment report) produced by/for ARFADA — **not** a proposal, TOR,
   policy, or branding/manual document.
-- If ARFADA authorship/sharing clearance is not evident in the file, `register`
-  requires `--confirm-clearance` (the user confirming ARFADA may share it).
-- Registration copies the file into `annexes/previous_work/` and writes
-  `previous_work.json`. **Never state that an example is annexed until the actual file
-  exists in the run package.**
+- **Selection ≠ sharing clearance (v0.6.12).** `register` records the user's choice
+  ("use the IRC report") as PREVIOUS_WORK_SELECTED; PREVIOUS_WORK_CLEARANCE stays
+  UNVERIFIED. Run `clear --note` only with the user's explicit permission wording
+  ("cleared to share", "permission confirmed", "yes, it may be shared externally").
+  ARFADA authorship is not clearance, and `--confirm-clearance` alone no longer clears.
+- Until cleared, the draft may name the proposed report but must never say it is
+  attached / accompanies / enclosed / provided / annexed; PREVIOUS_WORK_CLEARANCE
+  remains a final-submission blocker.
+
+### Team names and roles (v0.6.12)
+- Identify people by `staff_profile_id`; always write the full `canonical_name` —
+  never initials. If `canonical_name_status` is not VERIFIED, read the CV and promote
+  a `full_name` staff fact with `staff_profile_id`.
+- `rank_team` assigns one person per TOR role (`role_fit_score`, evidence only) and
+  lists `role_shortlists`; use them rather than overriding the ranking by hand.
 
 ---
 

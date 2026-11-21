@@ -205,13 +205,10 @@ def _parent(p: dict) -> str:
 
 
 def same_person(a: dict, b: dict) -> bool:
-    ka, kb = person_key(a), person_key(b)
-    if not ka or not kb:
-        return False
-    if set(ka) == set(kb):
-        return True
-    shorter, longer = (ka, kb) if len(ka) <= len(kb) else (kb, ka)
-    return len(shorter) >= 2 and set(shorter) <= set(longer) and _parent(a) == _parent(b) != ""
+    """v0.6.12 stable identity: identical full canonical names (in order) or one
+    person-named folder — never shared tokens (Ahmed / Mohamed / Ishag …)."""
+    from .staff_identity import same_person as _same
+    return _same(a, b)
 
 
 # ---------------------------------------------------------------------------

@@ -105,9 +105,12 @@ def check_submission_package(
              ("cv_annex", "previous_work", "detailed_budget",
               "cover_letter", "technical_proposal", "methodology", "work_plan")]
     for k in other:
-        annex = _glob_annex(run_dir, k)
-        add(f"Annex: {k}", bool(annex), annex,
-            hint="" if annex else f"place the {k} file under annexes/{k}/")
+        if k == "other":
+            continue          # v0.6.12: never a generic, unnamed annex expectation
+        folder = k.split(":", 1)[-1]
+        annex = _glob_annex(run_dir, folder)
+        add(f"Annex: {folder.replace('_', ' ')}", bool(annex), annex,
+            hint="" if annex else f"place the {folder} file under annexes/{folder}/")
 
     missing = [it["label"] for it in items if not it["present"]]
     return {

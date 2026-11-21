@@ -17,6 +17,7 @@ import re
 LABELS = {
     "FINANCIAL_PROPOSAL": "Financial proposal / detailed budget",
     "PREVIOUS_WORK_SAMPLE": "Previous-work sample",
+    "PREVIOUS_WORK_CLEARANCE": "Previous-work sharing clearance",
     "REGISTRATION_EVIDENCE": "Registration evidence",
     "TEAM_CV_PACKAGE": "Team CV package",
     "TEAM_AVAILABILITY": "Team availability",
@@ -80,10 +81,17 @@ def canonicalize(items: list, *, claim_state: dict = None) -> list:
     """One blocker per unresolved item; sources kept for traceability."""
     out: dict = {}
     order: list = []
+    cs = (claim_state or {}).get("claims") or {}
+    # v0.6.12: once a report is SELECTED, the open item is its sharing CLEARANCE
+    pw_selected = (cs.get("previous_work_selected") or {}).get("status") == "VERIFIED"
+    pw_cleared = (cs.get("previous_work_clearance") or {}).get("status") == "VERIFIED"
+    pw_key = "PREVIOUS_WORK_CLEARANCE" if pw_selected and not pw_cleared else "PREVIOUS_WORK_SAMPLE"
 
     def add(key, item, primary=False):
         if key == "EXPORT_STEP":
             return
+        if key == "PREVIOUS_WORK_SAMPLE":
+            key = pw_key
         if key not in out:
             label = LABELS.get(key) or key.split(":", 1)[-1].capitalize()
             out[key] = {"blocker": key, "label": label, "message": _message(item),
@@ -105,6 +113,14 @@ def canonicalize(items: list, *, claim_state: dict = None) -> list:
     for ckey, bkey in CLAIM_TO_BLOCKER.items():
         c = ((claim_state or {}).get("claims") or {}).get(ckey) or {}
         if c.get("required", True) and c.get("status") in ("MISSING", "UNVERIFIED", "PROVISIONAL"):
-            add(bkey, {"message": f"{LABELS[bkey]} pending — {c.get('detail', c.get('status'))}",
-                       "recommended_action": "Resolve before final submission."})
+            label = LABELS[pw_key] if bkey == "PREVIOUS_WORK_SAMPLE" else LABELS[bkey]
+            detail = c.get("detail", c.get("status"))
+            if bkey == "PREVIOUS_WORK_SAMPLE" and pw_key == "PREVIOUS_WORK_CLEARANCE":
+                detail = (cs.get("previous_work_clearance") or {}).get("detail", detail)
+            add(bkey, {"message": f"{label} pending — {detail}",
+                       "recommended_action": ("Record explicit permission to share the selected "
+                                              "report (previous_work.py clear --note …)."
+                                              if pw_key == "PREVIOUS_WORK_CLEARANCE" and
+                                              bkey == "PREVIOUS_WORK_SAMPLE"
+                                              else "Resolve before final submission.")})
     return [out[k] for k in order]
