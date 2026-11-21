@@ -164,6 +164,9 @@ def run_final_qa(run_dir: str | Path, *, plugin_version: Optional[str] = None) -
     findings += _check_claim_consistency(ctx)
     findings += _check_semantic_consistency(ctx)
     findings += _check_source_inconsistency(ctx)
+    # v0.6.13 evidence-aware compliance + source semantics
+    findings += _check_requirement_evidence(ctx)
+    findings += _check_source_semantics(ctx)
 
     # dedup
     seen, uniq = set(), []
@@ -196,6 +199,9 @@ def run_final_qa(run_dir: str | Path, *, plugin_version: Optional[str] = None) -
         "warnings": [f.as_dict() for f in uniq if f.severity == WARNING],
         "info": [f.as_dict() for f in uniq if f.severity == INFO],
         "findings": [f.as_dict() for f in uniq],
+        # v0.6.13: evidence-aware coverage matrix + stored sample-size arithmetic
+        "requirement_coverage": _coverage_rows(ctx),
+        "sampling_provenance": ctx.get("sampling_provenance", {}),
     }
 
 
@@ -218,9 +224,19 @@ def _summary(ctx, findings, counts) -> dict:
                 if d.get("decision_status") == "RESOLVED"]
     dec_ok = sum(1 for d in resolved if _decision_respected(ctx, d))
 
+    # v0.6.13: coverage reflects evidence quality — a requirement addressed only by a
+    # methodology commitment is not "covered" when it is a qualification
+    from .requirement_evidence import coverage_summary
+    cov = coverage_summary(_coverage_rows(ctx))
     return {
         "mandatory_requirements": len(mandatory),
         "mandatory_addressed": mand_addressed,
+        "mandatory_fully_covered": cov["fully_covered"],
+        "mandatory_partially_covered": cov["partially_covered"],
+        "mandatory_evidence_gap": cov["evidence_gap"],
+        "mandatory_not_addressed": cov["not_addressed"],
+        "coverage_by_type": cov["by_type"],
+        "coverage_line": cov["line"],
         "critical_failures": counts.get(CRITICAL, 0),
         "errors": counts.get(ERROR, 0),
         "warnings": counts.get(WARNING, 0),
@@ -1249,7 +1265,9 @@ def to_markdown(report: dict) -> str:
     lines = [
         "# ARFADA Final Quality Review", "",
         f"**Status: {report['overall_status']}**", "",
-        f"- Mandatory requirements: {s['mandatory_addressed']}/{s['mandatory_requirements']} addressed",
+        f"- Mandatory requirements: {s['mandatory_addressed']}/{s['mandatory_requirements']} addressed "
+        f"in the draft",
+        f"- Evidence-aware coverage: {s.get('coverage_line', '')}",
         f"- Critical failures: {s['critical_failures']}",
         f"- Errors: {s['errors']}",
         f"- Warnings: {s['warnings']}",
@@ -1358,6 +1376,68 @@ def _check_semantic_consistency(ctx) -> list[Finding]:
                                f"{issue.status}", evidence=issue.sentence[:160], section_id=sid,
                                recommended_action=f"Use: {issue.replacement}"))
     return out
+
+
+def _check_source_semantics(ctx) -> list[Finding]:
+    """v0.6.13: TOR TARGET figures called 'registered'; target-derived stratum allocations
+    not marked provisional (to be recalculated at inception from the registration list)."""
+    from .source_semantics import find_population_issues
+    out = []
+    register = _claim_state(ctx).get("population_figures") or {}
+    if not register.get("figures"):
+        return out
+    for sid, cand in ctx["gen_sections"].items():
+        for it in find_population_issues(cand, register, section_id=sid):
+            if it["kind"] == "REGISTERED_TARGET_FIGURE":
+                msg, act = (f"TOR target figure written as registered: {it['detail']}",
+                            "Call it the TOR target composition; 'registered' needs a "
+                            "registration record (project_records.json).")
+            else:
+                msg, act = (f"Allocation not marked provisional: {it['detail']}",
+                            "Write: Provisional allocation based on the TOR target composition; "
+                            "recalculated at inception from the registration list.")
+            out.append(Finding("SOURCE_SEMANTICS", WARNING, it["kind"].lower(), msg,
+                               evidence=it["sentence"][:160], section_id=sid,
+                               blocks_client=False, recommended_action=act))
+    return out
+
+
+def _check_requirement_evidence(ctx) -> list[Finding]:
+    """v0.6.13: mandatory qualifications the selected team does not (fully) evidence.
+
+    Reported as improvements (never draft blockers): a methodology commitment does not
+    satisfy a personnel / company qualification, so the coverage summary counts them as
+    PARTIALLY_COVERED / EVIDENCE_GAP rather than covered."""
+    from .requirement_evidence import (QUALIFICATION_TYPES, PARTIALLY_COVERED, EVIDENCE_GAP)
+    out = []
+    for r in _coverage_rows(ctx):
+        if r["requirement_type"] not in QUALIFICATION_TYPES or not r.get("mandatory", True):
+            continue
+        if r["coverage"] not in (PARTIALLY_COVERED, EVIDENCE_GAP):
+            continue
+        gaps = ", ".join(r.get("gaps") or []) or "evidence"
+        out.append(Finding("REQUIREMENT_EVIDENCE", INFO, r["coverage"].lower(),
+                           f"{r['coverage'].replace('_', ' ').title()}: {r['text'][:90]} — not "
+                           f"evidenced by the selected team: {gaps}",
+                           evidence=r.get("basis", ""), requirement_id=r["req_id"],
+                           section_id="TEAM", blocks_client=False,
+                           recommended_action="Promote the CV evidence (staff fact) if it exists, "
+                                              "or strengthen the team; keep the methodology "
+                                              "commitment separate from the qualification."))
+    return out
+
+
+def _coverage_rows(ctx) -> list:
+    """Evidence-aware coverage per requirement (claim-state evidence + the draft's ledger)."""
+    if "_coverage_rows" not in ctx:
+        from .requirement_evidence import evidence_matrix, apply_draft
+        state = _claim_state(ctx)
+        matrix = state.get("requirement_evidence")
+        if matrix is None:
+            matrix = evidence_matrix(ctx["requirements"], state.get("team") or [],
+                                     claims=state.get("claims") or {})
+        ctx["_coverage_rows"] = apply_draft(matrix, _addressed_requirement_ids(ctx))
+    return ctx["_coverage_rows"]
 
 
 def _check_source_inconsistency(ctx) -> list[Finding]:

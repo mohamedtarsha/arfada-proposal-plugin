@@ -53,6 +53,10 @@ SAFE_WORDING = {
     "source_inconsistency": "Values reproduced from the TOR will be reconciled against the "
                             "approved baseline dataset and PMF during inception where "
                             "inconsistencies exist.",
+    # v0.6.13: a stratum allocation derived from a TOR TARGET composition
+    "target_allocation": "Provisional allocation based on the TOR target composition: "
+                         "{allocation}. The allocation will be recalculated at inception from "
+                         "the registration list.",
 }
 
 _PLACEHOLDER = re.compile(
@@ -185,6 +189,24 @@ def _required_checklist_keys(requirements: list) -> set:
     return keys
 
 
+def _sampling_provenance(run_dir: Path) -> dict:
+    """Stored sample-size arithmetic of the current draft (n / (1 − r), v0.6.13)."""
+    sec_dir = run_dir / "generated_sections"
+    if not sec_dir.exists():
+        return {}
+    try:
+        from .numeric_claims import sampling_provenance, is_historical_section
+        texts = []
+        from .final_qa import _section_text          # the same flattening QA uses
+        for f in sec_dir.glob("*.json"):
+            if is_historical_section(f.stem):
+                continue
+            texts.append(_section_text(json.loads(f.read_text(encoding="utf-8"))))
+        return sampling_provenance("\n".join(texts))
+    except Exception:
+        return {}
+
+
 def _team(run_dir: Path) -> list:
     setup = _load(run_dir / "proposed_setup.json") or {}
     team = setup.get("team") or []
@@ -279,14 +301,26 @@ def build_claim_state(run_dir: str | Path, *, knowledge=None,
         by_id = {p.get("staff_id"): p for p in pool}
         from .lknowledge.staff_evidence import profile_claims, field_roster_readiness
         from .lknowledge.staff_identity import canonical_identity
-        for m in team:
+        from .requirement_evidence import member_topic_evidence
+        profiles = [by_id.get(m.get("staff_profile_id") or m.get("staff_id"), {**m}) for m in team]
+        # v0.6.13: qualification evidence is read from the selected experts' own CV text
+        # (cached role-evidence snippets), never from job titles or proposal commitments
+        need = [p for p in profiles if not p.get("role_evidence") and p.get("source_rel_path")]
+        if need:
+            try:
+                from .lknowledge.staff_role_fit import attach_role_evidence
+                attach_role_evidence(need, budget_s=30.0)
+            except Exception:
+                pass
+        for m, p in zip(team, profiles):
             sid = m.get("staff_profile_id") or m.get("staff_id")
-            p = by_id.get(sid, {**m})
             ident = canonical_identity(p, staff_facts=facts)
             team_claims.append({"staff_id": sid, **ident,
                                 "name": ident["canonical_name"] or m.get("name"),
                                 "role": m.get("role", ""),
-                                "claims": profile_claims(p, places=places, staff_facts=facts)})
+                                "claims": profile_claims(p, places=places, staff_facts=facts),
+                                "qualification_evidence": member_topic_evidence(
+                                    p, staff_facts=facts, places=places)})
         if country:
             r = field_roster_readiness(pool, country=country, places=places)
             roster = {**r, "detail": (f"{r['field_cvs_in_target_area']} field CVs evidenced in "
@@ -295,10 +329,25 @@ def build_claim_state(run_dir: str | Path, *, knowledge=None,
         roster = {"status": UNVERIFIED, "detail": f"staff evidence unavailable: {e}"}
     claims["field_roster"] = {**roster, "required": False}
 
+    # v0.6.13: evidence-aware requirement coverage (team level; commitments never
+    # satisfy a qualification)
+    from .requirement_evidence import evidence_matrix
+    company = {"field_roster": roster.get("status", UNVERIFIED),
+               "field_roster_detail": roster.get("detail", "")}
+    req_evidence = evidence_matrix(requirements, team_claims, places=places, company=company,
+                                   claims=claims)
+    # v0.6.13: source semantics of TOR population figures (TARGET is never promoted to
+    # REGISTERED_CASELOAD) and the stored sample-size arithmetic
+    from .source_semantics import load_register
+    population = load_register(run_dir)
+
     inconsist = (_load(run_dir / "source_inconsistencies.json") or {}).get("items", [])
     return {"schema": "claim_state/1",
             "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
             "claims": claims, "team": team_claims,
+            "requirement_evidence": req_evidence,
+            "population_figures": population,
+            "sampling_provenance": _sampling_provenance(run_dir),
             "source_inconsistencies": inconsist,
             # v0.6.12: duration wording exactly as the TOR writes it
             "tor_durations": list(tor.get("duration_mentions") or []),
@@ -340,6 +389,30 @@ def generation_policy(state: dict) -> dict:
                             "by staff_profile_id. If canonical_name_status is not VERIFIED, read "
                             "the CV and promote a full_name staff fact (staff_profile_id=…)."),
             "unresolved_claims": rules, "team": team,
+            # v0.6.13: qualifications the selected team does not (fully) evidence — a
+            # methodology commitment must not be written as the team's qualification
+            "qualification_evidence_gaps": [
+                {"req_id": r["req_id"], "requirement": r["text"][:160],
+                 "evidence_status": r["evidence_status"], "not_evidenced": r["gaps"]}
+                for r in state.get("requirement_evidence") or []
+                if r.get("requirement_type") in ("PERSONNEL_QUALIFICATION", "COMPANY_QUALIFICATION")
+                and r.get("evidence_status") != "FULLY_COVERED"],
+            "qualification_instruction": (
+                "For a qualification listed in qualification_evidence_gaps, state only what the "
+                "selected experts' CVs evidence; describe how the evaluation will apply the "
+                "standard as a methodology commitment, never as the team's demonstrated "
+                "qualification.") if state.get("requirement_evidence") else "",
+            "population_figures": [
+                {"value": f["value"], "semantics": f["semantics"],
+                 "registered_supported": f["registered_supported"], "label": f.get("label", "")}
+                for f in (state.get("population_figures") or {}).get("figures", [])],
+            "population_instruction": (
+                "Never call a TARGET figure 'registered'. A stratum allocation derived from a TOR "
+                "target composition is written as: " + SAFE_WORDING["target_allocation"])
+            if (state.get("population_figures") or {}).get("figures") else "",
+            "sampling_rule": ("Non-response inflation: required initial sample = n / (1 - r) "
+                              "(225 / 0.90 = 250), never n x (1 + r); round up; keep the "
+                              "baseline sample as a separate reference value."),
             "source_inconsistencies": state.get("source_inconsistencies", []),
             "source_inconsistency_wording": SAFE_WORDING["source_inconsistency"]
             if state.get("source_inconsistencies") else ""}

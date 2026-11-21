@@ -279,11 +279,20 @@ class TestNumericTokens(unittest.TestCase):
         p = sampling_provenance(t)
         self.assertEqual((p["minimum"], p["allowance_pct"], p["adjusted"], p["proposed"],
                           p["rounding"], p["baseline"]), (225, 10, 247.5, 250, "upward", 243))
-        self.assertTrue(p["consistent"])
+        # v0.6.13: 247.5 is n × (1 + r); non-response inflation is n / (1 − r) = 250
+        self.assertFalse(p["consistent"])
+        self.assertEqual((p["draft_formula"], p["required_initial"]), ("n * (1 + r)", 250))
         self.assertEqual(sorted({c.value for c in prose_claims(t, "SAMPLING")
                                  if c.metric == "survey"}), [250])      # 247.5 and 243 separate
         f = self._qa(t)
-        self.assertEqual([x for x in f if x["check"] in ("SAMPLING_PROVENANCE", "CONTRADICTION")], [])
+        self.assertEqual([x for x in f if x["check"] == "CONTRADICTION"], [])
+        self.assertEqual(len([x for x in f if x["check"] == "SAMPLING_PROVENANCE"]), 1)
+        t13 = ("A finite population correction gives a minimum sample of 225 households. Allowing "
+               "for 10% non-response, the required initial sample is 225 / 0.90 = 250 households; the "
+               "proposed sample is 250. The baseline sample was 243 households.")
+        self.assertTrue(sampling_provenance(t13)["consistent"])
+        self.assertEqual([x for x in self._qa(t13)
+                          if x["check"] in ("SAMPLING_PROVENANCE", "CONTRADICTION")], [])
         bad = sampling_provenance("Minimum sample 225; 10% reserve; proposed sample 240.")
         self.assertFalse(bad["consistent"])
 

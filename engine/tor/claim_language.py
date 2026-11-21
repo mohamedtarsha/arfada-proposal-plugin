@@ -326,6 +326,13 @@ def sanitize_candidate(candidate: dict, state: dict, *, section_id: str = "",
                 b["items"][ii] = new
             else:
                 b["rows"][ii][ci] = new
+    # v0.6.13: a TOR TARGET figure is never labelled "registered"; a stratum allocation
+    # derived from the target composition is marked provisional (recalculated at inception)
+    register = (state or {}).get("population_figures") or {}
+    if register.get("figures"):
+        from .source_semantics import sanitize_population
+        cand, pop_changes = sanitize_population(cand, register, section_id=section_id)
+        changes += pop_changes
     # de-dup residual
     seen, res = set(), []
     for r in residual:

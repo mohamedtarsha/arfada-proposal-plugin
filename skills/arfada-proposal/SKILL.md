@@ -821,6 +821,26 @@ Rules you MUST follow when writing:
   state only `verified_attributes` as qualifications. Reproduce TOR figures listed in
   `source_inconsistencies` unchanged and use `source_inconsistency_wording`. The
   validator rejects a contradiction (`CLAIM_CONTRADICTION` / `UNVERIFIED_PERSONNEL_CLAIM`).
+- **Qualifications need evidence (v0.6.13).** A methodology commitment ("tools will be
+  referenced to CHS and Sphere") never satisfies a personnel or company qualification.
+  For each item in `claim_policy.qualification_evidence_gaps`, write only what the
+  selected experts' CVs evidence and present the rest as how the evaluation will apply
+  the standard — never as the team's demonstrated qualification. QA reports
+  coverage as FULLY_COVERED / PARTIALLY_COVERED / EVIDENCE_GAP / NOT_ADDRESSED
+  (`requirement_coverage` in `final_qa.json`). A requirement can be met by the team
+  collectively unless the TOR assigns it to a role.
+- **Non-response inflation (v0.6.13).** Required initial sample = n / (1 − r), never
+  n × (1 + r): with a 225 minimum and 10% non-response, 225 / 0.90 = 250. State the
+  minimum, the rate, the division and the rounded-up proposed sample; keep the
+  baseline sample (e.g. 243) as a separate reference value.
+- **Source semantics (v0.6.13).** `claim_policy.population_figures` gives each TOR
+  household figure its meaning (OBSERVED_BASELINE, TARGET, REGISTERED_CASELOAD,
+  VERIFIED_PROJECT_RECORD). Never call a TARGET figure "registered" (e.g. 780 FHH /
+  520 MHH in a target column). A stratum allocation derived from a target composition
+  is written as `population_instruction` says ("Provisional allocation based on the
+  TOR target composition: 150 FHH / 100 MHH … recalculated at inception from the
+  registration list"). A figure becomes VERIFIED_PROJECT_RECORD only through
+  `source_semantics.record_project_figure` (`project_records.json`) from a real record.
 - Every mandatory slot in the packet needs a ledger entry with real block_ids.
 - Use `applied_decisions` values EXACTLY (e.g. if KII count resolved to 35, write 35 — never 30 or "approximately 35").
 - For DEFERRED decisions, state confirmation at inception; do NOT invent a value.

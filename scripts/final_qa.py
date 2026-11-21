@@ -56,6 +56,7 @@ def main(argv=None) -> int:
         "overall_status": report["overall_status"],
         "fingerprint": report["fingerprint"],
         "mandatory_addressed": f"{s['mandatory_addressed']}/{s['mandatory_requirements']}",
+        "mandatory_coverage": s.get("coverage_line", ""),
         "critical_failures": s["critical_failures"],
         "errors": s["errors"],
         "warnings": s["warnings"],

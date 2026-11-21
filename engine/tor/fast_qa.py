@@ -76,7 +76,18 @@ def two_status_report(run_dir: str | Path, *, extra_submission_gaps: list = None
 
     package = PKG_READY if not final_blockers else PKG_NOT_READY
 
-    gaps_md = render_internal_gaps(buckets, extra_notes=extra_notes)
+    # v0.6.13: evidence-aware mandatory coverage (qualifications need evidence)
+    rows = qa.get("requirement_coverage") or []
+    coverage = {"line": (qa.get("summary") or {}).get("coverage_line", ""), "rows": rows}
+    try:
+        import json as _json
+        (run_dir / "requirement_coverage.json").write_text(_json.dumps(
+            {"run_id": qa.get("run_id"), "summary": coverage["line"], "rows": rows,
+             "sampling_provenance": qa.get("sampling_provenance", {})},
+            ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+    gaps_md = render_internal_gaps(buckets, extra_notes=extra_notes, coverage=coverage)
 
     return {
         "run_id": qa.get("run_id"),
@@ -91,6 +102,7 @@ def two_status_report(run_dir: str | Path, *, extra_submission_gaps: list = None
                         (claim_state.get("claims") or {}).items()},
         "warnings": warnings,
         "improvements": buckets["IMPROVEMENT"],
+        "requirement_coverage": coverage["line"],
         "internal_gaps_md": gaps_md,
         "summary_line": f"Technical Draft: {technical.replace('_', ' ')}  ·  "
                         f"Submission Package: {package.replace('_', ' ')}",
