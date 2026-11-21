@@ -87,16 +87,29 @@ def _bullet(item: Any) -> str:
 
 
 def render_coverage(coverage: dict) -> list:
-    """Evidence-aware mandatory coverage lines for internal_gaps.md (v0.6.13)."""
-    if not coverage or not coverage.get("line"):
+    """Content vs evidence coverage for internal_gaps.md (v0.6.14: two dimensions)."""
+    if not coverage or not coverage.get("content_line"):
         return []
-    lines = ["## Mandatory requirement coverage (evidence-aware)", f"- {coverage['line']}"]
-    for r in coverage.get("rows") or []:
-        if not r.get("mandatory", True) or r.get("coverage") == "FULLY_COVERED":
-            continue
-        gaps = ", ".join(r.get("gaps") or [])
-        lines.append(f"- {r['coverage']} · {r['requirement_type']} · {r['text'][:110]}"
-                     + (f" — not evidenced: {gaps}" if gaps else ""))
+    rows = [r for r in coverage.get("rows") or [] if r.get("mandatory", True)]
+    lines = ["## Mandatory requirement coverage — content vs evidence",
+             f"- {coverage['content_line']}", f"- {coverage['evidence_line']}",
+             f"- {coverage['readiness_line']}"]
+    content = [r for r in rows if r.get("response_status") != "ADDRESSED"]
+    if content:
+        lines.append("")
+        lines.append("### Content gaps (the proposal text does not fully respond)")
+        lines += [f"- {r['response_status']} · {r['requirement_type']} · {r['text'][:110]} — "
+                  f"{r.get('response_basis', '')}" for r in content]
+    ev = [r for r in rows if r.get("evidence_status") in ("PARTIAL", "GAP")]
+    if ev:
+        lines.append("")
+        lines.append("### Evidence gaps (text responds; ARFADA proof is partial or missing)")
+        for r in ev:
+            tag = r.get("qualification_readiness") or "PACKAGE"
+            gaps = ", ".join(r.get("gaps") or [])
+            lines.append(f"- {tag} · evidence {r['evidence_status']} · text "
+                         f"{r.get('response_status', '')} · {r['requirement_type']} · "
+                         f"{r['text'][:110]}" + (f" — not evidenced: {gaps}" if gaps else ""))
     return lines + [""]
 
 

@@ -14,12 +14,17 @@ Every TOR requirement gets a type:
 A methodology promise ("tools will be referenced to CHS and Sphere") never satisfies a
 qualification. A qualification is covered only by evidence: the selected experts' CV
 evidence (team level — a requirement can be met collectively unless the TOR assigns it
-to a role) or, for the firm, verified company evidence. Coverage:
+to a role) or, for the firm, verified company evidence.
 
-  FULLY_COVERED      every required element evidenced (VERIFIED)
-  PARTIALLY_COVERED  some elements evidenced, or evidence only PROVISIONAL
-  EVIDENCE_GAP       addressed in the text, but nothing evidenced (commitment only)
-  NOT_ADDRESSED      not addressed in the draft at all
+EVIDENCE_STATUS (v0.6.14 — independent of the proposal text):
+
+  VERIFIED      every required element evidenced
+  PARTIAL       some elements evidenced, or evidence only PROVISIONAL
+  GAP           nothing evidenced (the proposal can only commit)
+  NOT_REQUIRED  a proposal commitment satisfies the requirement
+
+Whether the proposal TEXT responds is a separate dimension (RESPONSE_STATUS,
+``response_coverage.py``). An evidence gap never makes a requirement "not addressed".
 """
 from __future__ import annotations
 
@@ -36,11 +41,16 @@ REQUIREMENT_TYPES = (PERSONNEL_QUALIFICATION, COMPANY_QUALIFICATION, METHODOLOGY
                      DELIVERABLE_REQUIREMENT, SUBMISSION_ARTIFACT, DESIGN_CONSTRAINT)
 QUALIFICATION_TYPES = (PERSONNEL_QUALIFICATION, COMPANY_QUALIFICATION)
 
-FULLY_COVERED = "FULLY_COVERED"
-PARTIALLY_COVERED = "PARTIALLY_COVERED"
-EVIDENCE_GAP = "EVIDENCE_GAP"
-NOT_ADDRESSED = "NOT_ADDRESSED"
-COVERAGE_STATUSES = (FULLY_COVERED, PARTIALLY_COVERED, EVIDENCE_GAP, NOT_ADDRESSED)
+# v0.6.14: EVIDENCE_STATUS is independent of whether the proposal TEXT responds
+# (RESPONSE_STATUS, computed from the generated text in response_coverage.py)
+EV_VERIFIED = "VERIFIED"            # every required element evidenced
+EV_PARTIAL = "PARTIAL"              # some elements evidenced, or only PROVISIONAL evidence
+EV_GAP = "GAP"                      # nothing evidenced (a commitment only)
+EV_NOT_REQUIRED = "NOT_REQUIRED"    # a commitment satisfies it (methodology, deliverable…)
+EVIDENCE_STATUSES = (EV_VERIFIED, EV_PARTIAL, EV_GAP, EV_NOT_REQUIRED)
+
+# qualification readiness (internal review / final-submission readiness, never a draft blocker)
+READINESS_VERIFIED, READINESS_PARTIAL, AT_RISK = "VERIFIED", "PARTIAL", "AT_RISK"
 
 VERIFIED, PROVISIONAL, UNVERIFIED = "VERIFIED", "PROVISIONAL", "UNVERIFIED"
 _H = r"[\s\-‐‑–]*"          # space / hyphen / non-breaking hyphen
@@ -302,18 +312,18 @@ def evidence_coverage(req: dict, team: list, *, places: Iterable[str] = (),
             order = {VERIFIED: 3, "NOT_APPLICABLE": 3, PROVISIONAL: 2}
             sts = [((claims or {}).get(k) or {}).get("status", UNVERIFIED) for k in keys]
             st = min(sts, key=lambda s: order.get(s, 0))
-            row["evidence_status"] = (FULLY_COVERED if order.get(st, 0) == 3 else
-                                      PARTIALLY_COVERED if st == PROVISIONAL else EVIDENCE_GAP)
+            row["evidence_status"] = (EV_VERIFIED if order.get(st, 0) == 3 else
+                                      EV_PARTIAL if st == PROVISIONAL else EV_GAP)
             row["basis"] = "claim state: " + ", ".join(f"{k} {s}" for k, s in zip(keys, sts))
-            if row["evidence_status"] != FULLY_COVERED:
+            if row["evidence_status"] != EV_VERIFIED:
                 row["gaps"] = [label]
         else:
-            row["evidence_status"] = FULLY_COVERED
-            row["basis"] = "proposal content (addressed in the draft)"
+            row["evidence_status"] = EV_NOT_REQUIRED
+            row["basis"] = "proposal content (answered by the technical proposal itself)"
         return row
     if rtype not in QUALIFICATION_TYPES:
         row["scope"] = "COMMITMENT"
-        row["evidence_status"] = FULLY_COVERED
+        row["evidence_status"] = EV_NOT_REQUIRED
         row["basis"] = "a proposal commitment satisfies this requirement"
         return row
 
@@ -356,26 +366,26 @@ def evidence_coverage(req: dict, team: list, *, places: Iterable[str] = (),
                      "evidence": f"{_years(holder)[0]} years"}] if holder else [])})
 
     if not team:
-        row["evidence_status"] = EVIDENCE_GAP
+        row["evidence_status"] = EV_GAP
         row["basis"] = "no team selected — methodology commitments are not qualification evidence"
         row["gaps"] = [e["label"] for e in row["elements"]] or ["selected-expert evidence"]
         return row
     if not row["elements"]:
-        row["evidence_status"] = PARTIALLY_COVERED
+        row["evidence_status"] = EV_PARTIAL
         row["basis"] = "no deterministic evidence rule for this wording — reviewer to confirm"
         row["gaps"] = ["reviewer confirmation"]
         return row
     sts = [e["status"] for e in row["elements"]]
     row["gaps"] = [e["label"] for e in row["elements"] if e["status"] != VERIFIED]
     if all(s == VERIFIED for s in sts):
-        row["evidence_status"] = FULLY_COVERED
+        row["evidence_status"] = EV_VERIFIED
         row["basis"] = ("verified company evidence" if row["scope"] == "COMPANY"
                         else "selected-expert CV evidence")
     elif any(s in (VERIFIED, PROVISIONAL) for s in sts):
-        row["evidence_status"] = PARTIALLY_COVERED
+        row["evidence_status"] = EV_PARTIAL
         row["basis"] = "part of the requirement is evidenced; the rest is a commitment only"
     else:
-        row["evidence_status"] = EVIDENCE_GAP
+        row["evidence_status"] = EV_GAP
         row["basis"] = "methodology commitment only — no selected-expert or company evidence"
     return row
 
@@ -387,31 +397,9 @@ def evidence_matrix(requirements: list, team: list, *, places: Iterable[str] = (
             for r in requirements or [] if r.get("actor") != "CLIENT"]
 
 
-def apply_draft(matrix: list, addressed_ids: set) -> list:
-    """Final coverage = evidence coverage, but NOT_ADDRESSED when the draft never answers it."""
-    out = []
-    for row in matrix:
-        r = dict(row)
-        r["addressed_in_draft"] = r["req_id"] in addressed_ids
-        if r["requirement_type"] == SUBMISSION_ARTIFACT and r["basis"].startswith("claim state"):
-            r["coverage"] = r["evidence_status"]          # a package item, not draft text
-        elif not r["addressed_in_draft"]:
-            r["coverage"] = NOT_ADDRESSED
-        else:
-            r["coverage"] = r["evidence_status"]
-        out.append(r)
-    return out
-
-
-def coverage_summary(rows: list) -> dict:
-    mand = [r for r in rows if r.get("mandatory", True)]
-    count = {s: sum(1 for r in mand if r.get("coverage") == s) for s in COVERAGE_STATUSES}
-    by_type = {}
-    for r in mand:
-        t = by_type.setdefault(r["requirement_type"], {s: 0 for s in COVERAGE_STATUSES})
-        t[r.get("coverage", NOT_ADDRESSED)] += 1
-    return {"mandatory": len(mand), **{s.lower(): n for s, n in count.items()},
-            "by_type": by_type,
-            "line": (f"{count[FULLY_COVERED]}/{len(mand)} mandatory requirements fully covered · "
-                     f"{count[PARTIALLY_COVERED]} partially covered · {count[EVIDENCE_GAP]} "
-                     f"evidence gap · {count[NOT_ADDRESSED]} not addressed")}
+def qualification_readiness(row: dict) -> str:
+    """VERIFIED / PARTIAL / AT_RISK for a qualification row ('' for other types)."""
+    if row.get("requirement_type") not in QUALIFICATION_TYPES:
+        return ""
+    return {EV_VERIFIED: READINESS_VERIFIED, EV_PARTIAL: READINESS_PARTIAL}.get(
+        row.get("evidence_status"), AT_RISK)
