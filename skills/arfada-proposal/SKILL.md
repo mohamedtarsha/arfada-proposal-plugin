@@ -10,7 +10,7 @@ trigger: /arfada-proposal
 
 # ARFADA Proposal Assistant
 
-**Plugin version:** 0.6.6
+**Plugin version:** 0.6.7
 **Publisher:** ARFADA
 **Status:** Fast Proposal Mode (default) + mandatory ARFADA Writing DNA — TOR → useful
 Word draft fast, ≤5 questions, auto-recommend, provisional decisions, two-status QA,
@@ -23,7 +23,7 @@ section-specific historical style + style QA; full safety engines unchanged
 When invoked without context, print:
 
 ```
-ARFADA Proposal Assistant v0.6.6
+ARFADA Proposal Assistant v0.6.7
 
   ★ Fast Proposal Mode (DEFAULT) — TOR → proposal_draft_v1.docx, ≤5 questions
      (writes in ARFADA's Writing DNA; style QA on each draft)

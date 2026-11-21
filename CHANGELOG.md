@@ -6,7 +6,7 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
-## [Unreleased]
+## [0.6.7] — 2026-11-21
 
 ### Fixed — staff-CV country attribution with nested folders
 - A CV's `country` now comes from the FIRST folder directly below `Staff CVs`,
