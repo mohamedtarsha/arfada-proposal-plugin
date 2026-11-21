@@ -6,6 +6,26 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [Unreleased]
+
+### Fixed — staff-CV country attribution with nested folders
+- A CV's `country` now comes from the FIRST folder directly below `Staff CVs`,
+  however deeply it is nested. Previously it used the immediate parent folder,
+  so CVs in role/person subfolders were labelled "Senior Evaluation Expert",
+  "Team Leader" or a person's name, and country-ranked team selection missed them.
+- Expert pools (`International Experts`) set `country_pool`; no country is invented.
+- Unambiguous spellings normalized to Master Tracker names (`Palistin` → `Palestine`,
+  `Türkiye` → `Turkey`). Unknown top folders are flagged `UNRECOGNIZED_FOLDER`.
+- New profile fields: `country_pool`, `source_country_folder`, `country_status`,
+  `country_source`. Parsed CV facts and provenance are unchanged.
+- Unchanged CVs are re-attributed on refresh without being re-parsed;
+  `scripts/repair_staff_country.py` fixes an existing index in place.
+- `search_staff` matches canonical country or pool and accepts `strict_country`;
+  Fast Proposal team ranking shows each candidate's country.
+- Regression tests: `tests/test_staff_country.py`.
+
+---
+
 ## [0.6.6] — 2026-11-21
 
 ### ARFADA Writing DNA — mandatory writing layer over Fast Proposal Mode
