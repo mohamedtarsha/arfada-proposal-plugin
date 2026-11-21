@@ -3187,8 +3187,19 @@ def _complete_run(tmp, *, break_missing=False, break_number=False, warn_long=Fal
         if break_number and sid == "METHODOLOGY":
             blocks.append({"block_id": "bn", "type": "paragraph",
                            "text": "We will conduct 25 KIIs only."})
+        # v0.6.14: response coverage is computed from the TEXT — a compliant run must
+        # actually answer each team qualification (not cite one generic sentence)
+        from engine.tor.requirement_evidence import requirement_type, QUALIFICATION_TYPES
+        quals = {s["slot_id"] for s in slots
+                 if requirement_type({"text": s.get("requirement_text", ""), "category": "team"})
+                 in QUALIFICATION_TYPES}
+        if quals:
+            blocks.append({"block_id": "rq", "type": "bullet_list", "items": [
+                f"The proposed team responds to this TOR requirement: {s['requirement_text']}"
+                for s in slots if s["slot_id"] in quals]})
         ledger = [{"slot_id": s["slot_id"], "requirement_id": s["requirement_id"],
-                   "block_ids": ["b1"], "response_summary": "addressed", "status": "ADDRESSED"}
+                   "block_ids": ["b1", "rq"] if s["slot_id"] in quals else ["b1"],
+                   "response_summary": "addressed", "status": "ADDRESSED"}
                   for s in slots]
         if break_missing and sid == "METHODOLOGY" and ledger:
             ledger = ledger[:-1]

@@ -81,23 +81,23 @@ class TestRequirementTypes(unittest.TestCase):
 class TestEvidenceCoverage(unittest.TestCase):
     def test_methodology_commitment_never_covers_a_qualification(self):
         team = [_member("tl", "Team Leader", "Led baseline and endline evaluations in Darfur.")]
-        row = RE.apply_draft([RE.evidence_coverage(CHS_REQ, team)], {"r_chs"})[0]
-        self.assertTrue(row["addressed_in_draft"])                 # the draft promises CHS…
-        self.assertEqual(row["coverage"], RE.EVIDENCE_GAP)          # …but nobody evidences it
+        row = RE.evidence_coverage(CHS_REQ, team)                    # the draft may promise CHS…
+        self.assertEqual(row["evidence_status"], RE.EV_GAP)          # …but nobody evidences it
+        self.assertEqual(RE.qualification_readiness(row), RE.AT_RISK)
         self.assertIn("commitment", row["basis"])
 
     def test_partial_and_team_level_coverage(self):
         gender = _member("g", "Gender Specialist", "Upheld safeguarding, PSEA and accountability.")
         stat = _member("s", "Data Analyst", "Certifications: Core Humanitarian Standard (CHS).")
         row = RE.evidence_coverage(CHS_REQ, [gender])
-        self.assertEqual(row["evidence_status"], RE.PARTIALLY_COVERED)
+        self.assertEqual(row["evidence_status"], RE.EV_PARTIAL)
         self.assertEqual(set(row["gaps"]), {"Core Humanitarian Standard (CHS)", "Sphere Standards"})
         row2 = RE.evidence_coverage(CHS_REQ, [gender, stat])          # collective
-        self.assertEqual(row2["evidence_status"], RE.PARTIALLY_COVERED)
+        self.assertEqual(row2["evidence_status"], RE.EV_PARTIAL)
         self.assertEqual(row2["gaps"], ["Sphere Standards"])
         sphere = _member("f", "FSL Specialist", "Applied Sphere minimum standards for food security.")
         full = RE.evidence_coverage(CHS_REQ, [gender, stat, sphere])
-        self.assertEqual(full["evidence_status"], RE.FULLY_COVERED)
+        self.assertEqual(full["evidence_status"], RE.EV_VERIFIED)
         self.assertEqual(full["scope"], "TEAM_COLLECTIVE")
         by = {e["element"]: [b["staff_profile_id"] for b in e["by"]] for e in full["elements"]}
         self.assertEqual((by["chs"], by["sphere"], by["safeguarding"]), (["s"], ["f"], ["g"]))
@@ -107,13 +107,13 @@ class TestEvidenceCoverage(unittest.TestCase):
         g = _member("g", "Gender Specialist", "Gender-sensitive evaluations and GBV programming.")
         row = RE.evidence_coverage(TL_REQ, [tl, g])
         self.assertEqual((row["scope"], row["assigned_role"]), ("ROLE_ASSIGNED", "team_leader"))
-        self.assertNotEqual(row["evidence_status"], RE.FULLY_COVERED)   # gender only via g
+        self.assertNotEqual(row["evidence_status"], RE.EV_VERIFIED)   # gender only via g
 
     def test_years_need_one_expert_with_the_experience(self):
         a = _member("a", "Team Leader", "Food security baseline and endline evaluations.", years=20)
         b = _member("b", "Field Coordinator", "Field logistics.", years=3)
-        self.assertEqual(RE.evidence_coverage(YEARS_REQ, [a, b])["evidence_status"], RE.FULLY_COVERED)
-        self.assertNotEqual(RE.evidence_coverage(YEARS_REQ, [b])["evidence_status"], RE.FULLY_COVERED)
+        self.assertEqual(RE.evidence_coverage(YEARS_REQ, [a, b])["evidence_status"], RE.EV_VERIFIED)
+        self.assertNotEqual(RE.evidence_coverage(YEARS_REQ, [b])["evidence_status"], RE.EV_VERIFIED)
         el = RE.qualification_elements(YEARS_REQ["text"], places=["South Darfur"])
         self.assertEqual((el["min_years"], el["preferred"]), (5, ["local_area"]))   # 'preferably'
 
@@ -121,26 +121,30 @@ class TestEvidenceCoverage(unittest.TestCase):
         team = [_member("f", "FSL Specialist", "Head of Office for South Darfur.")]
         row = RE.evidence_coverage(DEPLOY_REQ, team, places=["South Darfur"],
                                    company={"field_roster": "PROVISIONAL"})
-        self.assertEqual(row["evidence_status"], RE.PARTIALLY_COVERED)
+        self.assertEqual(row["evidence_status"], RE.EV_PARTIAL)
 
     def test_no_team_is_an_evidence_gap(self):
-        self.assertEqual(RE.evidence_coverage(SADD_REQ, [])["evidence_status"], RE.EVIDENCE_GAP)
+        self.assertEqual(RE.evidence_coverage(SADD_REQ, [])["evidence_status"], RE.EV_GAP)
 
     def test_artifacts_follow_claim_state(self):
         reg = {"req_id": "r_reg", "category": "general", "mandatory": True,
                "text": "Evidence of registration as a consultant(s) or firm."}
         row = RE.evidence_coverage(reg, [], claims={"registration_evidence": {"status": "MISSING"}})
-        self.assertEqual(row["evidence_status"], RE.EVIDENCE_GAP)
+        self.assertEqual(row["evidence_status"], RE.EV_GAP)
         row = RE.evidence_coverage(reg, [], claims={"registration_evidence": {"status": "VERIFIED"}})
-        self.assertEqual(row["evidence_status"], RE.FULLY_COVERED)
+        self.assertEqual(row["evidence_status"], RE.EV_VERIFIED)
 
     def test_summary_counts_evidence_quality(self):
         team = [_member("g", "Gender Specialist", "Safeguarding and PSEA.")]
         m = [RE.evidence_coverage(r, team) for r in (CHS_REQ, SADD_REQ, METH_REQ)]
-        s = RE.coverage_summary(RE.apply_draft(m, {"r_chs", "r_sadd", "r_meth"}))
-        self.assertEqual((s["mandatory"], s["fully_covered"], s["partially_covered"],
-                          s["evidence_gap"], s["not_addressed"]), (3, 1, 1, 1, 0))
-        self.assertIn("1/3 mandatory requirements fully covered", s["line"])
+        from engine.tor.response_coverage import combine, coverage_summary, ADDRESSED
+        s = coverage_summary(combine(m, {r: {"response_status": ADDRESSED}
+                                         for r in ("r_chs", "r_sadd", "r_meth")}))
+        self.assertEqual(s["content"], {"addressed": 3, "partially_addressed": 0,
+                                        "not_addressed": 0})                 # text answers all
+        self.assertEqual((s["evidence"]["verified"], s["evidence"]["partial"],
+                          s["evidence"]["gaps"], s["evidence"]["not_required"]), (0, 1, 1, 1))
+        self.assertEqual(s["qualification_readiness"], RE.AT_RISK)
 
 
 def _qa_run(team_profiles, *, requirements, sections):
@@ -170,26 +174,31 @@ class TestQaIntegration(unittest.TestCase):
         ledger = [{"requirement_id": r["req_id"], "status": "ADDRESSED", "block_ids": ["t1"]}
                   for r in (CHS_REQ, SADD_REQ, METH_REQ)]
         blocks = [{"block_id": "t1", "type": "paragraph", "text":
-                   "Evaluation tools will be referenced to CHS commitments and Sphere standards; "
+                   "Evaluation tools will be referenced to CHS commitments, Sphere standards and "
+                   "safeguarding principles; "
                    "the questionnaire records sex, age and disability for disaggregated analysis."}]
         d = _qa_run(team, requirements=[CHS_REQ, SADD_REQ, METH_REQ],
                     sections={"TEAM": (blocks, ledger)})
         qa = run_final_qa(d)
         s = qa["summary"]
         self.assertEqual(s["mandatory_addressed"], 3)                    # all in the text…
-        self.assertEqual((s["mandatory_fully_covered"], s["mandatory_partially_covered"],
-                          s["mandatory_evidence_gap"]), (1, 1, 1))       # …not all evidenced
+        self.assertEqual(s["content_coverage"]["addressed"], 3)
+        self.assertEqual((s["evidence_coverage"]["partial"], s["evidence_coverage"]["gaps"]),
+                         (1, 1))                                         # …not all evidenced
         rows = {r["req_id"]: r for r in qa["requirement_coverage"]}
-        self.assertEqual(rows["r_chs"]["coverage"], RE.PARTIALLY_COVERED)
-        self.assertEqual(rows["r_sadd"]["coverage"], RE.EVIDENCE_GAP)
+        self.assertEqual((rows["r_chs"]["response_status"], rows["r_chs"]["evidence_status"]),
+                         ("ADDRESSED", RE.EV_PARTIAL))
+        self.assertEqual((rows["r_sadd"]["response_status"], rows["r_sadd"]["evidence_status"]),
+                         ("ADDRESSED", RE.EV_GAP))
         ev = [f for f in qa["findings"] if f["check"] == "REQUIREMENT_EVIDENCE"]
         self.assertEqual({f["requirement_id"] for f in ev}, {"r_chs", "r_sadd"})
         self.assertTrue(all(f["severity"] == "INFO" for f in ev))       # never a draft blocker
         self.assertFalse(any(b.get("check") == "REQUIREMENT_EVIDENCE"
                              for b in classify_blockers(qa)[DRAFT_BLOCKER]))
         from engine.tor.final_qa import to_markdown
-        self.assertIn("Evidence-aware coverage: 1/3 mandatory requirements fully covered",
-                      to_markdown(qa))
+        md = to_markdown(qa)
+        self.assertIn("CONTENT COVERAGE — 3/3 mandatory addressed", md)
+        self.assertIn("EVIDENCE COVERAGE — 0/2 requiring evidence verified · 1 partial · 1 gaps", md)
 
     def test_generation_policy_lists_gaps(self):
         from engine.tor.claim_state import build_claim_state, generation_policy
@@ -362,8 +371,8 @@ class TestRealSouthDarfurTor(unittest.TestCase):
         self.assertEqual(RE.requirement_type(chs), RE.PERSONNEL_QUALIFICATION)
         team = [_member("tl", "Team Leader", "Led baseline, endline and impact evaluations; "
                         "safeguarding and informed consent in data collection.", years=20)]
-        row = RE.apply_draft([RE.evidence_coverage(chs, team)], {chs["req_id"]})[0]
-        self.assertNotEqual(row["coverage"], RE.FULLY_COVERED)
+        row = RE.evidence_coverage(chs, team)
+        self.assertNotEqual(row["evidence_status"], RE.EV_VERIFIED)
         self.assertIn("Sphere Standards", row["gaps"])
         self.assertIn("Core Humanitarian Standard (CHS)", row["gaps"])
 

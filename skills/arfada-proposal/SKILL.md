@@ -825,10 +825,17 @@ Rules you MUST follow when writing:
   referenced to CHS and Sphere") never satisfies a personnel or company qualification.
   For each item in `claim_policy.qualification_evidence_gaps`, write only what the
   selected experts' CVs evidence and present the rest as how the evaluation will apply
-  the standard — never as the team's demonstrated qualification. QA reports
-  coverage as FULLY_COVERED / PARTIALLY_COVERED / EVIDENCE_GAP / NOT_ADDRESSED
-  (`requirement_coverage` in `final_qa.json`). A requirement can be met by the team
-  collectively unless the TOR assigns it to a role.
+  the standard — never as the team's demonstrated qualification. A requirement can be
+  met by the team collectively unless the TOR assigns it to a role.
+- **Response ≠ evidence (v0.6.14).** QA keeps two independent dimensions per
+  requirement (`requirement_coverage` in `final_qa.json`): RESPONSE_STATUS
+  (ADDRESSED / PARTIALLY_ADDRESSED / NOT_ADDRESSED) is computed from the generated text
+  and the requirement → section mapping; EVIDENCE_STATUS (VERIFIED / PARTIAL / GAP /
+  NOT_REQUIRED) from CV / company / claim-state provenance. The ledger is a mapping:
+  cite every block that answers the requirement — its status label is ignored and
+  cannot be edited into coverage. Weak evidence never makes a requirement "not
+  addressed"; it shows as QUALIFICATION_READINESS PARTIAL / AT_RISK in internal_gaps.md
+  and never blocks the technical draft. Never re-mark ledger entries to clear QA.
 - **Non-response inflation (v0.6.13).** Required initial sample = n / (1 − r), never
   n × (1 + r): with a 225 minimum and 10% non-response, 225 / 0.90 = 250. State the
   minimum, the rate, the division and the rounded-up proposed sample; keep the

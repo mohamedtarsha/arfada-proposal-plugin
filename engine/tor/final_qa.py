@@ -224,19 +224,21 @@ def _summary(ctx, findings, counts) -> dict:
                 if d.get("decision_status") == "RESOLVED"]
     dec_ok = sum(1 for d in resolved if _decision_respected(ctx, d))
 
-    # v0.6.13: coverage reflects evidence quality — a requirement addressed only by a
-    # methodology commitment is not "covered" when it is a qualification
-    from .requirement_evidence import coverage_summary
+    # v0.6.14: two separate summaries — CONTENT (does the text respond?) and EVIDENCE
+    # (does ARFADA hold proof?) — plus QUALIFICATION_READINESS; an evidence gap is never
+    # counted as a content gap
+    from .response_coverage import coverage_summary
     cov = coverage_summary(_coverage_rows(ctx))
     return {
         "mandatory_requirements": len(mandatory),
         "mandatory_addressed": mand_addressed,
-        "mandatory_fully_covered": cov["fully_covered"],
-        "mandatory_partially_covered": cov["partially_covered"],
-        "mandatory_evidence_gap": cov["evidence_gap"],
-        "mandatory_not_addressed": cov["not_addressed"],
-        "coverage_by_type": cov["by_type"],
-        "coverage_line": cov["line"],
+        "content_coverage": cov["content"],
+        "evidence_coverage": cov["evidence"],
+        "qualification_readiness": cov["qualification_readiness"],
+        "qualifications": cov["qualifications"],
+        "content_line": cov["content_line"],
+        "evidence_line": cov["evidence_line"],
+        "readiness_line": cov["readiness_line"],
         "critical_failures": counts.get(CRITICAL, 0),
         "errors": counts.get(ERROR, 0),
         "warnings": counts.get(WARNING, 0),
@@ -274,8 +276,30 @@ def _fingerprint(ctx, plugin_version: str) -> str:
 # Coverage helpers
 # ---------------------------------------------------------------------------
 
+def _responses(ctx) -> dict:
+    """v0.6.14: RESPONSE_STATUS per requirement, computed from the generated text and the
+    requirement → section mapping (the ledger's status label is ignored)."""
+    if "_responses" not in ctx:
+        from .response_coverage import compute_responses
+        meta = ctx["tor"].get("metadata", {}) or {}
+        places = list(((meta.get("subnational_location") or {}).get("values") or [])) \
+            if isinstance(meta.get("subnational_location"), dict) else []
+        ctx["_responses"] = compute_responses(
+            ctx["requirements"], ctx["gen_sections"],
+            section_status=ctx["status"].get("sections", {}), blueprint=ctx["blueprint"],
+            places=places)
+    return ctx["_responses"]
+
+
 def _addressed_requirement_ids(ctx) -> set:
-    """Requirement ids whose ledger status is ADDRESSED in a READY section."""
+    """Requirement ids the proposal TEXT addresses (computed — never self-declared)."""
+    from .response_coverage import ADDRESSED
+    return {rid for rid, r in _responses(ctx).items() if r["response_status"] == ADDRESSED}
+
+
+def _ledger_addressed_ids(ctx) -> set:
+    """Requirement ids whose ledger status is ADDRESSED in a READY section (legacy:
+    used only to skip package-item checks, which the claim state governs)."""
     out = set()
     status = ctx["status"].get("sections", {})
     for sid, cand in ctx["gen_sections"].items():
@@ -344,6 +368,19 @@ def _check_requirement_coverage(ctx) -> list[Finding]:
                                    evidence=r.get("text", "")[:120], section_id=sec,
                                    requirement_id=rid,
                                    recommended_action="Resolve the dependent decision, regenerate."))
+            continue
+        # v0.6.14: the text responds only in part — a content weakness to review, not a
+        # missing requirement (an evidence gap never reaches this check)
+        resp = _responses(ctx).get(rid) or {}
+        if resp.get("response_status") == "PARTIALLY_ADDRESSED":
+            out.append(Finding("REQUIREMENT_COVERAGE", WARNING if mandatory else INFO,
+                               "partial_response",
+                               ("Mandatory requirement only partially answered in the text: "
+                                if mandatory else "Optional requirement partially answered: ")
+                               + resp.get("response_basis", ""),
+                               evidence=r.get("text", "")[:120], section_id=sec,
+                               requirement_id=rid, blocks_client=False,
+                               recommended_action="Complete the response in the owning section."))
             continue
         # not addressed, not blocked
         sev = CRITICAL if mandatory else INFO
@@ -845,7 +882,7 @@ def _check_submission(ctx) -> list[Finding]:
     if not sub_reqs:
         return out
     from .submission import is_status_item, requires_physical_annex
-    addressed = _addressed_requirement_ids(ctx)
+    addressed = _ledger_addressed_ids(ctx)
     proposal_text = _all_generated_text(ctx).lower()
     for r in sub_reqs:
         if r["req_id"] in addressed:
@@ -1267,7 +1304,9 @@ def to_markdown(report: dict) -> str:
         f"**Status: {report['overall_status']}**", "",
         f"- Mandatory requirements: {s['mandatory_addressed']}/{s['mandatory_requirements']} addressed "
         f"in the draft",
-        f"- Evidence-aware coverage: {s.get('coverage_line', '')}",
+        f"- {s.get('content_line', '')}",
+        f"- {s.get('evidence_line', '')}",
+        f"- {s.get('readiness_line', '')}",
         f"- Critical failures: {s['critical_failures']}",
         f"- Errors: {s['errors']}",
         f"- Warnings: {s['warnings']}",
@@ -1403,22 +1442,25 @@ def _check_source_semantics(ctx) -> list[Finding]:
 
 
 def _check_requirement_evidence(ctx) -> list[Finding]:
-    """v0.6.13: mandatory qualifications the selected team does not (fully) evidence.
+    """v0.6.14: mandatory qualifications the selected team does not (fully) evidence.
 
-    Reported as improvements (never draft blockers): a methodology commitment does not
-    satisfy a personnel / company qualification, so the coverage summary counts them as
-    PARTIALLY_COVERED / EVIDENCE_GAP rather than covered."""
-    from .requirement_evidence import (QUALIFICATION_TYPES, PARTIALLY_COVERED, EVIDENCE_GAP)
+    EVIDENCE_STATUS is independent of RESPONSE_STATUS: the text may answer a
+    qualification (ADDRESSED) while ARFADA lacks proof (PARTIAL / GAP). These are
+    reported for internal review with QUALIFICATION_READINESS (PARTIAL / AT_RISK) and
+    never block the technical draft."""
+    from .requirement_evidence import QUALIFICATION_TYPES, EV_PARTIAL, EV_GAP
     out = []
     for r in _coverage_rows(ctx):
         if r["requirement_type"] not in QUALIFICATION_TYPES or not r.get("mandatory", True):
             continue
-        if r["coverage"] not in (PARTIALLY_COVERED, EVIDENCE_GAP):
+        if r["evidence_status"] not in (EV_PARTIAL, EV_GAP):
             continue
         gaps = ", ".join(r.get("gaps") or []) or "evidence"
-        out.append(Finding("REQUIREMENT_EVIDENCE", INFO, r["coverage"].lower(),
-                           f"{r['coverage'].replace('_', ' ').title()}: {r['text'][:90]} — not "
-                           f"evidenced by the selected team: {gaps}",
+        out.append(Finding("REQUIREMENT_EVIDENCE", INFO,
+                           f"evidence_{r['evidence_status'].lower()}",
+                           f"Qualification {r['qualification_readiness']} (evidence "
+                           f"{r['evidence_status']}, text {r['response_status']}): "
+                           f"{r['text'][:90]} — not evidenced by the selected team: {gaps}",
                            evidence=r.get("basis", ""), requirement_id=r["req_id"],
                            section_id="TEAM", blocks_client=False,
                            recommended_action="Promote the CV evidence (staff fact) if it exists, "
@@ -1428,15 +1470,17 @@ def _check_requirement_evidence(ctx) -> list[Finding]:
 
 
 def _coverage_rows(ctx) -> list:
-    """Evidence-aware coverage per requirement (claim-state evidence + the draft's ledger)."""
+    """Per requirement: RESPONSE_STATUS (computed from the text) + EVIDENCE_STATUS
+    (computed from CV / company / claim-state provenance) + QUALIFICATION_READINESS."""
     if "_coverage_rows" not in ctx:
-        from .requirement_evidence import evidence_matrix, apply_draft
+        from .requirement_evidence import evidence_matrix
+        from .response_coverage import combine
         state = _claim_state(ctx)
         matrix = state.get("requirement_evidence")
         if matrix is None:
             matrix = evidence_matrix(ctx["requirements"], state.get("team") or [],
                                      claims=state.get("claims") or {})
-        ctx["_coverage_rows"] = apply_draft(matrix, _addressed_requirement_ids(ctx))
+        ctx["_coverage_rows"] = combine(matrix, _responses(ctx))
     return ctx["_coverage_rows"]
 
 

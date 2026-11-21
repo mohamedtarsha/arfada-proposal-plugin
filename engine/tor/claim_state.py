@@ -396,12 +396,15 @@ def generation_policy(state: dict) -> dict:
                  "evidence_status": r["evidence_status"], "not_evidenced": r["gaps"]}
                 for r in state.get("requirement_evidence") or []
                 if r.get("requirement_type") in ("PERSONNEL_QUALIFICATION", "COMPANY_QUALIFICATION")
-                and r.get("evidence_status") != "FULLY_COVERED"],
+                and r.get("evidence_status") not in ("VERIFIED", "NOT_REQUIRED")],
             "qualification_instruction": (
                 "For a qualification listed in qualification_evidence_gaps, state only what the "
                 "selected experts' CVs evidence; describe how the evaluation will apply the "
                 "standard as a methodology commitment, never as the team's demonstrated "
-                "qualification.") if state.get("requirement_evidence") else "",
+                "qualification. Cite in the ledger every block that answers the requirement; "
+                "QA computes the response from the text and the evidence separately, so weak "
+                "evidence is not a reason to leave a requirement unanswered."
+                ) if state.get("requirement_evidence") else "",
             "population_figures": [
                 {"value": f["value"], "semantics": f["semantics"],
                  "registered_supported": f["registered_supported"], "label": f.get("label", "")}

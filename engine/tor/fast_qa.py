@@ -76,13 +76,18 @@ def two_status_report(run_dir: str | Path, *, extra_submission_gaps: list = None
 
     package = PKG_READY if not final_blockers else PKG_NOT_READY
 
-    # v0.6.13: evidence-aware mandatory coverage (qualifications need evidence)
+    # v0.6.14: content coverage and evidence coverage are separate dimensions
     rows = qa.get("requirement_coverage") or []
-    coverage = {"line": (qa.get("summary") or {}).get("coverage_line", ""), "rows": rows}
+    s = qa.get("summary") or {}
+    coverage = {"content_line": s.get("content_line", ""), "evidence_line": s.get("evidence_line", ""),
+                "readiness_line": s.get("readiness_line", ""), "rows": rows}
     try:
         import json as _json
         (run_dir / "requirement_coverage.json").write_text(_json.dumps(
-            {"run_id": qa.get("run_id"), "summary": coverage["line"], "rows": rows,
+            {"run_id": qa.get("run_id"),
+             "content_coverage": s.get("content_coverage", {}),
+             "evidence_coverage": s.get("evidence_coverage", {}),
+             "qualification_readiness": s.get("qualification_readiness", ""), "rows": rows,
              "sampling_provenance": qa.get("sampling_provenance", {})},
             ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
@@ -102,7 +107,9 @@ def two_status_report(run_dir: str | Path, *, extra_submission_gaps: list = None
                         (claim_state.get("claims") or {}).items()},
         "warnings": warnings,
         "improvements": buckets["IMPROVEMENT"],
-        "requirement_coverage": coverage["line"],
+        "content_coverage": coverage["content_line"],
+        "evidence_coverage": coverage["evidence_line"],
+        "qualification_readiness": s.get("qualification_readiness", ""),
         "internal_gaps_md": gaps_md,
         "summary_line": f"Technical Draft: {technical.replace('_', ' ')}  ·  "
                         f"Submission Package: {package.replace('_', ' ')}",
