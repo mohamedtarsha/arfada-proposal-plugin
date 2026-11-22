@@ -6,6 +6,45 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.6.17] — 2026-11-23
+
+### Fixed — operational issues confirmed by the fresh v0.6.16 run
+- **Portable Staff CV paths** (`lknowledge/staff_pool.py`). The persisted index stores Windows
+  separators, so on Linux 0/5 selected CVs resolved until the index was hand-edited.
+  `cv_file_for` now:
+  - splits the stored path on either separator;
+  - re-anchors absolute machine paths at the `Staff CVs` segment;
+  - matches each segment tolerantly (case / Unicode form);
+  - refuses traversal and anything outside `<Knowledge>/Staff CVs`;
+  - never edits the index.
+
+  The CV manifest records the stored path (`stored_rel_path`) for provenance.
+- **TEST_REPLAY status.** A replay reports `SUBMISSION_PACKAGE_STATUS:
+  NOT_ASSESSED_TEST_REPLAY`. Unresolved items appear as `live_submission_gaps_if_applicable`
+  (internal_gaps: "Live-submission gaps (only if this TOR were submitted live)"), never as
+  final-submission blockers. The expired deadline stays a warning. LIVE_SUBMISSION is
+  unchanged.
+- **Relevant experience** (`engine/tor/relevant_experience.py`). The 3–5 closest Master
+  Tracker assignments are selected automatically, scored on stage, themes, country, location,
+  client, methods and recency, with deterministic tie-breaks.
+  - Each carries tracker provenance; the current assignment is excluded, and no location the
+    tracker does not record is claimed.
+  - A FAST question appears only for a genuine tie at the cut-off or too few matches; override
+    with `run_decision.py <run_dir> relevant-experience "<id>,…"`.
+  - The selection is presented through `claim_policy.relevant_experience`. At export, a
+    selection placeholder becomes the tracker-backed table; other evidence gaps are untouched.
+  - QA surfaces an unresolved selection in internal_gaps.
+  - It is separate from the previous-work report file.
+- **Governance confirmation.** The organisation-level sharing statement is classified by
+  meaning (AFFIRMATIVE / NEGATIVE / AMBIGUOUS) instead of a magic phrase, so wrapping the same
+  words in a longer note gives the same result. Ambiguous wording needs an explicit Yes/No
+  (`arfada_policy.py … --confirm yes`), and the exact wording is kept. Report-level
+  restrictions still override the policy.
+
+### Unchanged
+- Writing DNA, team ranking, sampling, methodology generation, the qualification-evidence
+  model, FAST architecture (≤5 questions), live-submission guardrails.
+
 ## [0.6.16] — 2026-11-22
 
 ### Added — avoidable final-submission blockers resolved from Knowledge / explicit decisions
