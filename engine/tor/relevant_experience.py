@@ -118,11 +118,17 @@ def _is_current(p: dict, prof: dict) -> bool:
 
 
 def _entry(p: dict, s: int, why: dict, themes: list) -> dict:
-    stage = "final / endline evaluation" if "stage" in why else str(p.get("assignment_type") or "").title()
-    reason = "; ".join(x for x in [
-        stage, p.get("country") if "country" in why else "",
-        ("same client" if "client" in why else ""),
-        (", ".join(themes) if themes else "")] if x)
+    stage = ("Final / endline evaluation" if "stage" in why else
+             str(p.get("assignment_type") or "Assignment").title())
+    client = str(p.get("client") or "").split(" - ")[0].strip()
+    reason = stage
+    if "country" in why:
+        reason += f" in {p.get('country')}"
+    if "client" in why and client:
+        reason += f" for {client}"
+    if themes:
+        reason += " covering " + (", ".join(themes[:-1]) + " and " + themes[-1] if len(themes) > 1
+                                  else themes[0])
     return {"project_id": p.get("project_id"), "project_name": p.get("project_name"),
             "client": p.get("client"), "donor": p.get("donor"), "country": p.get("country"),
             "assignment_type": p.get("assignment_type"), "sector": p.get("sector"),
@@ -216,17 +222,20 @@ def resolved(doc: Optional[dict]) -> bool:
 
 TABLE_COLUMNS = ["Assignment (ARFADA project record)", "Client", "Country", "Year",
                  "Relevance to this TOR"]
-_PLACEHOLDER = re.compile(r"NEEDS_ARFADA_EVIDENCE[^\n]{0,400}?(?:relevant\s+(?:assignment|experience|"
-                          r"project)|featured|past\s+(?:assignment|project)|previous\s+(?:assignment|"
-                          r"project)|master\s+tracker)", re.I)
+# only a placeholder for SELECTING / FEATURING relevant assignments — never another evidence gap
+# (e.g. "firm-level record of ARFADA assignments in South Darfur" stays an honest gap)
+_PLACEHOLDER = re.compile(
+    r"NEEDS_ARFADA_EVIDENCE[^\n]{0,400}?(?:relevant\s+(?:assignments?|experience|projects?)|"
+    r"featured\s+(?:relevant\s+)?(?:past\s+)?(?:assignments?|projects?)|"
+    r"(?:select\w*|choose|choice)\s+(?:of\s+)?(?:\d\s*[–-]\s*\d\s+)?(?:featured\s+)?(?:relevant\s+)?"
+    r"(?:past\s+)?(?:assignments?|projects?))", re.I)
 
 
 def table_block(doc: dict, block_id: str = "rel_exp") -> dict:
     rows = []
     for c in doc.get("selected") or []:
-        name = c.get("project_name") or ""
-        stage = re.sub(r"-.*$", "", str(c.get("project_id") or ""))
-        rows.append([f"{name} ({stage})" if stage else name, c.get("client") or "",
+        # client-facing: the tracker's assignment name (the tracker id stays in provenance)
+        rows.append([c.get("project_name") or "", c.get("client") or "",
                      c.get("country") or "", str(c.get("year") or ""), c.get("relevance") or ""])
     return {"block_id": block_id, "type": "table", "columns": list(TABLE_COLUMNS), "rows": rows}
 

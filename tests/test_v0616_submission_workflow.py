@@ -182,7 +182,8 @@ class TestCvPackage(_PolicyStore):
         self.assertIn("unavailable", st["cv_c"]["reason"])
         self.assertEqual(sorted(st["cv_a"]), sorted(["staff_profile_id", "canonical_name", "role",
                                                      "source_cv_path", "packaged_cv_path", "status",
-                                                     "reason", "identity_check", "sha256"]))
+                                                     "reason", "identity_check", "sha256",
+                                                     "stored_rel_path"]))   # v0.6.17 provenance
         from engine.tor.claim_state import build_claim_state
         cv = build_claim_state(d)["claims"]["team_cv_package"]
         self.assertEqual(cv["status"], "MISSING")
