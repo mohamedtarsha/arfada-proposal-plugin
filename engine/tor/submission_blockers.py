@@ -98,8 +98,18 @@ def previous_work_state(run_dir: Path) -> tuple[bool, str]:
 
 def registration_state(run_dir: Path) -> tuple[bool, str]:
     files = _files(run_dir, "registration")
-    return (True, "registration file in package") if files else \
-        (False, "no registration evidence in the package")
+    if files:
+        return True, "registration file in package"
+    # v0.6.16: say whether ARFADA Knowledge holds candidates (the employee chooses one)
+    try:
+        from .package_builder import registration_candidates
+        cands = registration_candidates()
+    except Exception:
+        cands = []
+    if len(cands) > 1:
+        return False, (f"{len(cands)} registration documents found in ARFADA Knowledge/Company — "
+                       "choose one (run_decision.py <run_dir> registration-choice \"<file>\")")
+    return False, "no registration evidence in the package (none found in ARFADA Knowledge/Company)"
 
 
 def pending_submission_blockers(run_dir: str | Path, requirements: list) -> list:

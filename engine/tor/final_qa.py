@@ -817,8 +817,8 @@ def _check_deliverables(ctx) -> list[Finding]:
                                "TOR has deliverables but the DELIVERABLES section is not ready",
                                section_id="DELIVERABLES"))
         return out
-    addressed = {e.get("requirement_id") for e in cand.get("requirement_response_ledger", [])
-                 if e.get("status") == "ADDRESSED"}
+    # v0.6.16: the computed RESPONSE_STATUS (text + mapping), not the ledger's label
+    addressed = _addressed_requirement_ids(ctx)
     for r in deliv_reqs:
         if r["req_id"] not in addressed:
             out.append(Finding("DELIVERABLES", CRITICAL, "missing_deliverable",
@@ -895,6 +895,14 @@ def _check_submission(ctx) -> list[Finding]:
         # and a content item (e.g. "Risk Mitigation Plan") is satisfied when the
         # technical proposal covers it — only physical annexes stay package items
         if is_status_item(entry["text"]):
+            continue
+        # v0.6.16: a physical annex the package verifiably holds (claim state checks the
+        # actual files: CV manifest, cleared + annexed report, budget, registration file)
+        claim_key = {"cv_annex": "team_cv_package", "previous_work": "previous_work_sample",
+                     "detailed_budget": "financial_proposal",
+                     "registration": "registration_evidence"}.get(entry["item_key"])
+        if claim_key and ((_claim_state(ctx).get("claims") or {}).get(claim_key) or {}).get(
+                "status") == "VERIFIED":
             continue
         if not requires_physical_annex(entry):
             # a content item is answered by the technical proposal itself: satisfied if

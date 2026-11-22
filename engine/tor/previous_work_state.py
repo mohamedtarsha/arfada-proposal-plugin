@@ -83,9 +83,28 @@ def previous_work_states(run_dir: str | Path) -> dict:
         selected = {"status": MISSING, "detail": "no previous-work report selected"}
     cl = rec.get("clearance") if isinstance(rec.get("clearance"), dict) else {}
     note = cl.get("evidence") or ""
-    if cl.get("status") == VERIFIED and is_explicit_permission(note):
-        clearance = {"status": VERIFIED, "evidence": note[:200],
+    # v0.6.16: an organisation-level sharing policy can clear an in-scope report, but an
+    # explicit report-level restriction always overrides it
+    policy = None
+    if selected["status"] == VERIFIED and not (cl.get("status") == VERIFIED and
+                                               is_explicit_permission(note)):
+        try:
+            from .governance import policy_clearance
+            policy = policy_clearance(rec)
+        except Exception:
+            policy = None
+    if rec.get("restriction"):
+        clearance = {"status": UNVERIFIED, "restricted": True,
+                     "detail": f"the report carries an explicit sharing restriction "
+                               f"({rec['restriction']}) — do not package or share it"}
+    elif cl.get("status") == VERIFIED and is_explicit_permission(note):
+        clearance = {"status": VERIFIED, "evidence": note[:200], "source": "REPORT_PERMISSION",
                      "detail": "explicit sharing permission recorded"}
+    elif policy and policy["status"] == "APPROVED":
+        clearance = {"status": VERIFIED, "evidence": policy["evidence"], "source": "ORG_POLICY",
+                     "detail": policy["detail"]}
+    elif policy and policy["status"] == "RESTRICTED":
+        clearance = {"status": UNVERIFIED, "restricted": True, "detail": policy["detail"]}
     elif selected["status"] == VERIFIED:
         clearance = {"status": UNVERIFIED,
                      "detail": "sharing clearance not confirmed (selection is not permission)"}
@@ -101,7 +120,7 @@ def record_selection(run_dir: Path, *, file: Path, original: Path, verdict: dict
     keep = prev.get("clearance") if prev.get("original") == str(original) else None
     rec = {"file": str(file), "original": str(original), "label": label or Path(file).stem,
            "kind": verdict.get("kind"), "by_arfada": verdict.get("by_arfada"),
-           "selected": True,
+           "selected": True, "restriction": verdict.get("restriction", ""),
            "clearance": keep or {"status": UNVERIFIED, "evidence": "",
                                  "detail": "selection is not sharing permission"},
            "verdict": verdict}

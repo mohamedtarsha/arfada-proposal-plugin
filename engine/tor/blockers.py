@@ -114,9 +114,13 @@ def render_coverage(coverage: dict) -> list:
 
 
 def render_internal_gaps(buckets: dict, *, extra_notes: list = None,
-                         coverage: dict = None) -> str:
+                         coverage: dict = None, run_notes: list = None) -> str:
     """Render internal_gaps.md — short, actionable, team-only (never client-facing)."""
     lines = ["# Internal gaps — NOT for the client draft", ""]
+    if run_notes:                                   # v0.6.16: run purpose / replay warnings
+        lines.append("## Run purpose")
+        lines += [f"- {n}" for n in run_notes]
+        lines.append("")
     final_b = buckets.get(FINAL_SUBMISSION_BLOCKER, [])
     draft_b = buckets.get(DRAFT_BLOCKER, [])
     warns = buckets.get(WARNING, [])

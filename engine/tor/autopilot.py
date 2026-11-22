@@ -28,8 +28,9 @@ _AUTO_CATEGORIES = {
 
 # A question is justified only for these (§2). Priority order = list order.
 _QUESTION_PRIORITY = [
-    "assignment_type_ambiguous", "budget_ceiling", "strategic_methodology",
-    "previous_work_sharing", "mandatory_unknown_fact", "team_lead_choice",
+    "assignment_type_ambiguous", "run_purpose", "budget_ceiling", "submission_channel",
+    "strategic_methodology", "previous_work_sharing", "registration_choice",
+    "mandatory_unknown_fact", "team_lead_choice",
 ]
 _MAX_QUESTIONS = 5
 
@@ -117,9 +118,37 @@ def _previous_work_requested(requirements: list[dict]) -> bool:
 
 def build_questions(tor: dict, requirements: list[dict], *,
                     knowledge_has_rates: bool = False,
-                    previous_work_cleared: bool = False) -> list[dict]:
+                    previous_work_cleared: bool = False,
+                    decisions: Optional[dict] = None,
+                    registration_candidates: Optional[list] = None,
+                    previous_work_policy: bool = False) -> list[dict]:
     """Return AT MOST 5 genuinely-necessary questions (priority-ordered)."""
     q: list[dict] = []
+    decisions = decisions or {}
+    # v0.6.16: a passed deadline → is this a live submission or a test/replay?
+    from .claim_state import deadline_state, submission_channel_state
+    from . import run_decisions as _rd
+    dl = deadline_state(tor, requirements)
+    if "passed" in dl.get("detail", "") and not decisions.get("run_purpose"):
+        q.append({"key": "run_purpose", "question": _rd.RUN_PURPOSE_QUESTION,
+                  "options": [_rd.LIVE_SUBMISSION, _rd.TEST_REPLAY],
+                  "record": "run_decision.py <run_dir> run-purpose <LIVE_SUBMISSION|TEST_REPLAY>",
+                  "reason": f"The TOR deadline ({dl.get('value', '')}) has passed: a live "
+                            "submission needs an extension; a test/replay of an older TOR does not."})
+    # v0.6.16: an unresolved channel placeholder → ask the employee (never invent one)
+    ch = submission_channel_state(tor, requirements)
+    if ch.get("status") in ("MISSING", "UNVERIFIED") and not decisions.get("submission_channel")             and ch.get("detail") != "the TOR gives no submission instructions":
+        q.append({"key": "submission_channel", "question": _rd.CHANNEL_QUESTION,
+                  "options": ["<e-mail address / platform name / URL>", "Not known yet"],
+                  "record": "run_decision.py <run_dir> submission-channel \"<value>\"",
+                  "reason": ch.get("detail", "")})
+    if registration_candidates and len(registration_candidates) > 1 and             not decisions.get("registration_choice"):
+        q.append({"key": "registration_choice",
+                  "question": "Several registration documents were found in ARFADA Knowledge — "
+                              "which one should be packaged?",
+                  "options": [str(c) for c in registration_candidates][:6],
+                  "record": "run_decision.py <run_dir> registration-choice \"<file>\"",
+                  "reason": "More than one plausible registration certificate exists."})
     ambiguous, at_value, conf = _ambiguous_assignment_type(tor)
     if ambiguous:
         q.append({"key": "assignment_type_ambiguous", "decision_id": "assignment_type",
@@ -132,10 +161,18 @@ def build_questions(tor: dict, requirements: list[dict], *,
                   "reason": "A financial offer is required and no rates are available in "
                             "Knowledge; this cannot be safely guessed."})
     if _previous_work_requested(requirements) and not previous_work_cleared:
-        q.append({"key": "previous_work_sharing",
-                  "question": "May we share a specific previous-work report, and which one?",
-                  "reason": "The TOR requests an example of previous work; sharing clearance "
-                            "and the specific report are a human decision."})
+        if previous_work_policy:
+            # sharing is covered by ARFADA's organisation-level policy (v0.6.16)
+            q.append({"key": "previous_work_sharing",
+                      "question": "Which previous-work report should be included?",
+                      "reason": "The TOR requests an example of previous work; sharing is "
+                                "covered by ARFADA's approved organisation-level policy unless "
+                                "the chosen report carries its own restriction."})
+        else:
+            q.append({"key": "previous_work_sharing",
+                      "question": "May we share a specific previous-work report, and which one?",
+                      "reason": "The TOR requests an example of previous work; sharing clearance "
+                                "and the specific report are a human decision."})
     # cap + priority order
     q.sort(key=lambda x: _QUESTION_PRIORITY.index(x["key"])
            if x["key"] in _QUESTION_PRIORITY else 99)
@@ -281,14 +318,19 @@ def build_proposed_setup(tor: dict, recommendations: list[dict], team: dict,
 
 def autopilot(tor: dict, requirements: list[dict], candidates: list[dict],
               knowledge=None, *, knowledge_has_rates: bool = False,
-              previous_work_cleared: bool = False) -> dict:
+              previous_work_cleared: bool = False, decisions: Optional[dict] = None,
+              registration_candidates: Optional[list] = None,
+              previous_work_policy: bool = False) -> dict:
     """Full Fast-Mode setup: recommendations + <=5 questions + team + experience."""
     meta = tor.get("metadata", {})
     country = _mv(meta, "country")
     recs = recommend_decisions(candidates)
     questions = build_questions(tor, requirements,
                                 knowledge_has_rates=knowledge_has_rates,
-                                previous_work_cleared=previous_work_cleared)
+                                previous_work_cleared=previous_work_cleared,
+                                decisions=decisions,
+                                registration_candidates=registration_candidates,
+                                previous_work_policy=previous_work_policy)
     team = rank_team(knowledge, requirements, country=country, tor=tor) if knowledge else \
         {"team": [], "team_needs_question": False, "reason": "No Knowledge connected."}
     if team.get("team_needs_question") and len(questions) < _MAX_QUESTIONS:

@@ -75,6 +75,19 @@ def two_status_report(run_dir: str | Path, *, extra_submission_gaps: list = None
         technical = TECH_READY
 
     package = PKG_READY if not final_blockers else PKG_NOT_READY
+    # v0.6.16: a TEST_REPLAY of an older TOR is never presented as submission-ready, and its
+    # passed deadline is a warning (recorded accurately), not a final-submission blocker
+    purpose = claim_state.get("run_purpose", "")
+    run_notes = []
+    if purpose:
+        run_notes.append(f"RUN_PURPOSE: {purpose}")
+    dl = (claim_state.get("claims") or {}).get("deadline") or {}
+    if dl.get("warning"):
+        run_notes.append(f"WARNING — {dl.get('detail', '')}")
+    if purpose == "TEST_REPLAY":
+        package = PKG_NOT_READY
+        run_notes.append("TEST_REPLAY — submission readiness is not assessed for a replay; do not "
+                         "submit from this run.")
 
     # v0.6.14: content coverage and evidence coverage are separate dimensions
     rows = qa.get("requirement_coverage") or []
@@ -92,7 +105,8 @@ def two_status_report(run_dir: str | Path, *, extra_submission_gaps: list = None
             ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
         pass
-    gaps_md = render_internal_gaps(buckets, extra_notes=extra_notes, coverage=coverage)
+    gaps_md = render_internal_gaps(buckets, extra_notes=extra_notes, coverage=coverage,
+                                   run_notes=run_notes)
 
     return {
         "run_id": qa.get("run_id"),
@@ -110,7 +124,10 @@ def two_status_report(run_dir: str | Path, *, extra_submission_gaps: list = None
         "content_coverage": coverage["content_line"],
         "evidence_coverage": coverage["evidence_line"],
         "qualification_readiness": s.get("qualification_readiness", ""),
+        "run_purpose": purpose,
+        "run_notes": run_notes,
         "internal_gaps_md": gaps_md,
         "summary_line": f"Technical Draft: {technical.replace('_', ' ')}  ·  "
-                        f"Submission Package: {package.replace('_', ' ')}",
+                        f"Submission Package: {package.replace('_', ' ')}"
+                        + (f"  ·  Run: {purpose}" if purpose else ""),
     }

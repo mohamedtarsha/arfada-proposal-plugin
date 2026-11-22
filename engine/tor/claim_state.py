@@ -258,34 +258,72 @@ def build_claim_state(run_dir: str | Path, *, knowledge=None,
     else:
         claims["previous_work_sample"] = claim(VERIFIED if ok else NOT_APPLICABLE, why,
                                                required=False)
-    # team CV package
+    # team CV package — v0.6.16: per selected expert, from the auto-package manifest
     cvs = _files(run_dir, "cvs")
+    from .package_builder import cv_package_state
+    cvp = cv_package_state(run_dir) if _team(run_dir) else None
     if "cv_annex" in required:
-        claims["team_cv_package"] = claim(VERIFIED if cvs else MISSING,
-                                          f"{len(cvs)} CV file(s) in annexes/cvs/",
-                                          files=len(cvs))
+        if cvp is not None:
+            claims["team_cv_package"] = claim(VERIFIED if cvp["ok"] else MISSING, cvp["detail"],
+                                              files=len(cvs), packaged=cvp["packaged"],
+                                              team_size=cvp["team_size"],
+                                              unresolved=cvp["unresolved"])
+        else:
+            claims["team_cv_package"] = claim(VERIFIED if cvs else MISSING,
+                                              f"{len(cvs)} CV file(s) in annexes/cvs/",
+                                              files=len(cvs))
     else:
         claims["team_cv_package"] = claim(VERIFIED if cvs else NOT_APPLICABLE,
                                           "not required by the TOR", required=False)
-    # team availability: only a confirmation record makes it VERIFIED
+    # team availability: only an explicit user decision makes it VERIFIED (never assumed)
     team = _team(run_dir)
     avail = _load(run_dir / "team_availability.json") or {}
     facts = (_load(run_dir / "team_staff_facts.json") or {})
     facts = facts.get("facts", facts) if isinstance(facts, dict) else facts
     facts = facts if isinstance(facts, list) else []
     if team:
-        confirmed = [m for m in team if avail.get(str(m.get("staff_id"))) is True or any(
-            f.get("staff_id") == m.get("staff_id") and "availab" in str(f.get("attribute", "")).lower()
-            and f.get("verified") for f in facts)]
+        confirmed = [m for m in team if avail.get(str(m.get("staff_profile_id") or m.get("staff_id"))) is True
+                     or any(f.get("staff_id") == m.get("staff_id") and
+                            "availab" in str(f.get("attribute", "")).lower()
+                            and f.get("verified") for f in facts)]
         st = VERIFIED if len(confirmed) == len(team) else UNVERIFIED
+        prov = avail.get("_provenance") if isinstance(avail.get("_provenance"), dict) else {}
+        detail = f"{len(confirmed)}/{len(team)} proposed experts confirmed available"
+        if prov.get("decision"):
+            detail += f" ({prov['decision']}: \"{prov.get('note', '')[:80]}\")"
         claims["team_availability"] = claim(
-            st, f"{len(confirmed)}/{len(team)} proposed experts confirmed available",
-            confirmed=len(confirmed), team_size=len(team))
+            st, detail, confirmed=len(confirmed), team_size=len(team),
+            source=prov.get("decision", ""))
     else:
         claims["team_availability"] = claim(NOT_APPLICABLE, "no team proposed yet", required=False)
-    # submission channel + deadline (from the TOR)
+    # submission channel + deadline (from the TOR, then the employee's decisions — v0.6.16)
+    from . import run_decisions as _rd
+    decisions = _rd.load(run_dir)
     claims["submission_channel"] = submission_channel_state(tor, requirements)
+    ch = decisions.get("submission_channel") or {}
+    if claims["submission_channel"]["status"] != VERIFIED and ch.get("value"):
+        if ch["value"] == _rd.NOT_KNOWN:
+            claims["submission_channel"]["detail"] += " (employee: not known yet)"
+        else:
+            claims["submission_channel"] = claim(VERIFIED, "submission channel confirmed by the "
+                                                 "employee", value=ch["value"],
+                                                 source=_rd.USER_CONFIRMED)
     claims["deadline"] = deadline_state(tor, requirements, today=today)
+    purpose = (decisions.get("run_purpose") or {}).get("value", "")
+    dl = claims["deadline"]
+    passed = "passed" in dl.get("detail", "")
+    if passed and purpose == _rd.TEST_REPLAY:
+        # a replay of an older TOR: record the real deadline, warn, never imply an extension
+        claims["deadline"] = claim(NOT_APPLICABLE, f"TEST_REPLAY — the original TOR deadline "
+                                   f"({dl.get('value', '')}) has passed; recorded for reference "
+                                   "only, no extension is implied", required=False,
+                                   value=dl.get("value", ""), warning=True,
+                                   run_purpose=_rd.TEST_REPLAY)
+    elif passed and purpose == _rd.LIVE_SUBMISSION:
+        claims["deadline"] = claim(MISSING, f"LIVE_SUBMISSION — the TOR deadline "
+                                   f"({dl.get('value', '')}) has passed; a written extension / "
+                                   "client confirmation is required before final submission",
+                                   value=dl.get("value", ""), run_purpose=_rd.LIVE_SUBMISSION)
 
     # personnel + field roster (indexed CV evidence)
     meta = tor.get("metadata", {}) or {}
@@ -346,6 +384,7 @@ def build_claim_state(run_dir: str | Path, *, knowledge=None,
             "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
             "claims": claims, "team": team_claims,
             "requirement_evidence": req_evidence,
+            "run_purpose": (decisions.get("run_purpose") or {}).get("value", ""),
             "places": places,
             "population_figures": population,
             "sampling_provenance": _sampling_provenance(run_dir),
