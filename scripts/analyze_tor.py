@@ -431,8 +431,20 @@ def analyze(tor_path: str | Path, output_root: str | Path | None = None) -> dict
     # --- source semantics of TOR population figures (v0.6.13): TARGET vs baseline vs
     # registered caseload; a TARGET is never promoted to a registered caseload ---
     try:
-        from engine.tor.source_semantics import scan_blocks as _sem_scan, SEMANTICS_FILE
-        semantics = _sem_scan(all_blocks)
+        from engine.tor.source_semantics import (scan_blocks as _sem_scan, SEMANTICS_FILE,
+                                                 pdf_table_mentions, cell_table_mentions)
+        # v0.6.15: values in a recoverable TOR table inherit their column's role
+        cell_tables = []
+        for t in all_tables:
+            rows: dict = {}
+            for c in store.cells(t["table_id"]):
+                rows.setdefault(c["row_index"], {})[c.get("col_index", c.get("column_index", 0))] = \
+                    c.get("text") or ""
+            cell_tables.append({"rows": [[r[k] for k in sorted(r)] for _i, r in sorted(rows.items())]})
+        table_mentions = cell_table_mentions(cell_tables)
+        if str(tor_path).lower().endswith(".pdf"):
+            table_mentions += pdf_table_mentions(tor_path)
+        semantics = _sem_scan(all_blocks, table_mentions=table_mentions)
     except Exception:
         semantics, SEMANTICS_FILE = {"figures": []}, "source_semantics.json"
     result["population_figures"] = {str(f["value"]): f["primary"]
