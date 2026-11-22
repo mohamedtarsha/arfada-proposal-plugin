@@ -6,6 +6,34 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.6.15] — 2026-11-22
+
+### Fixed — confirmed fresh v0.6.14 South Darfur run
+- **Client-facing qualification claims follow the evidence** (`engine/tor/qualification_wording.py`).
+  The draft said "The TOR's qualification requirements can be met by the team collectively"
+  and listed methodology commitments (SADD collection, Sphere as a reference, cluster sampling
+  "if needed") under "How the team covers it". The writer now receives
+  `claim_policy.qualification_rendering`, with one client rule per qualification:
+  - VERIFIED: the team may be said to meet it.
+  - PARTIAL: only the evidenced portion; the rest is a methodological provision.
+  - GAP: never claimed as team experience.
+
+  The final-language sanitizer also enforces this at export:
+  - drops or neutralises blanket claims;
+  - renames the coverage column to "Evidenced team experience and methodological provisions";
+  - labels every sentence about a not-evidenced element "Methodological provision:".
+
+  A not-evidenced qualification attributed to a named expert is a `PERSONNEL_EVIDENCE` error.
+  Internal labels (GAP, AT_RISK…) are flagged. QA reports overclaims as `QUALIFICATION_CLAIM`.
+- **Table-column source semantics.** rCSI baseline values (508 / 685 / 20 HHs) were classified
+  as TARGET. A value in a recoverable TOR table (PDF layout columns via pypdf, DOCX cells) now
+  takes its column's role: Baseline → OBSERVED_BASELINE, Target → TARGET. Nearby target wording
+  no longer decides it. Percentage detection no longer crosses line breaks. TOR figures are
+  never altered.
+
+### Unchanged
+- FAST PROPOSAL flow, Writing DNA, team ranking, sampling, the canonical submission blockers.
+
 ## [0.6.14] — 2026-11-21
 
 ### Fixed — confirmed fresh v0.6.13 South Darfur run
