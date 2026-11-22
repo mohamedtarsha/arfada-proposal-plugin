@@ -1,7 +1,7 @@
 """arfada_policy.py — governed ARFADA organisation policies (v0.6.16).
 
 Usage:
-    python scripts/arfada_policy.py set previous-work-sharing --note "<the user's/admin's explicit confirmation>"
+    python scripts/arfada_policy.py set previous-work-sharing --note "<the user's/admin's exact words>" [--confirm yes]
     python scripts/arfada_policy.py revoke previous-work-sharing [--note "<reason>"]
     python scripts/arfada_policy.py show
 
@@ -33,9 +33,12 @@ def main(argv=None) -> int:
         _out({G.PREVIOUS_WORK_SHARING: G.previous_work_sharing_policy() or "NOT SET"})
         return 0
     if args[:2] == ["set", "previous-work-sharing"]:
-        res = G.set_previous_work_sharing_policy(note)
+        # v0.6.17: clearly affirmative wording is accepted as stated; ambiguous wording needs
+        # the explicit Yes/No confirmation (--confirm yes); negative wording is never recorded
+        confirmed = "--confirm" in args and args[args.index("--confirm") + 1:][:1] == ["yes"]
+        res = G.set_previous_work_sharing_policy(note, confirmed=confirmed)
         _out(res)
-        return 0 if res["ok"] else 4
+        return 0 if res["ok"] else (5 if res.get("status") == "NEEDS_CONFIRMATION" else 4)
     if args[:2] == ["revoke", "previous-work-sharing"]:
         _out(G.revoke_previous_work_sharing_policy(note))
         return 0

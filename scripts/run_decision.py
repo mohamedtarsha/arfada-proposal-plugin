@@ -23,7 +23,8 @@ if str(_PLUGIN_ROOT) not in sys.path:
 from engine.tor import run_decisions as RD  # noqa: E402
 
 _KEYS = {"run-purpose": "run_purpose", "submission-channel": "submission_channel",
-         "team-availability": "team_availability", "registration-choice": "registration_choice"}
+         "team-availability": "team_availability", "registration-choice": "registration_choice",
+         "relevant-experience": "relevant_experience"}
 
 
 def _out(d):

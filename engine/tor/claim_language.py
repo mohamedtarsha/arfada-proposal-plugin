@@ -333,6 +333,12 @@ def sanitize_candidate(candidate: dict, state: dict, *, section_id: str = "",
         from .source_semantics import sanitize_population
         cand, pop_changes = sanitize_population(cand, register, section_id=section_id)
         changes += pop_changes
+    # v0.6.17: a relevant-experience placeholder becomes the selected tracker-backed table
+    rx = (state or {}).get("relevant_experience")
+    if rx:
+        from .relevant_experience import apply_selection
+        cand, rx_changes = apply_selection(cand, rx, section_id=section_id)
+        changes += rx_changes
     # v0.6.15: client-facing qualification claims never stronger than the evidence status
     if (state or {}).get("requirement_evidence"):
         from .qualification_wording import sanitize_qualifications

@@ -30,11 +30,36 @@ SCOPE = "ARFADA client evaluation reports"
 IN_SCOPE_KINDS = {"evaluation_deliverable", "evaluation_report", "endline_report",
                   "final_evaluation", "baseline_report", "assessment_report"}
 
-_APPROVAL = re.compile(r"\bpermission\b[^.]{0,80}\bshar|\b(?:may|can|are\s+allowed\s+to|is\s+allowed\s+to)"
-                       r"\s+(?:be\s+)?shar|\bapproved?\b[^.]{0,60}\bshar|\bclients?\b[^.]{0,60}"
-                       r"\b(?:agreed|consent\w*|permit\w*)\b", re.I)
-_HEDGE = re.compile(r"\b(?:not|no|never|pending|check|ask|maybe|probably|if|whether|unless|"
-                    r"should|might|some\s+clients|case[- ]by[- ]case)\b|\?", re.I)
+# v0.6.17: confirmation is classified by meaning, not by a magic phrase. The same words give
+# the same result whether stated alone or inside a longer note.
+AFFIRMATIVE, NEGATIVE, AMBIGUOUS = "AFFIRMATIVE", "NEGATIVE", "AMBIGUOUS"
+_AFFIRM = re.compile(
+    r"\b(?:yes|yeah|yep|correct|confirm\w*|approv\w*|appl(?:y|ies|ied)|in\s+place|granted|"
+    r"permission|permitted|allowed|agreed?|authori[sz]\w*|consent\w*|cleared|valid|"
+    r"(?:may|can)\s+(?:be\s+)?shar\w*|ok(?:ay)?)\b", re.I)
+_NO_OBJECTION = re.compile(r"\bno\s+(?:restrictions?|objections?|issues?|problems?|concerns?)\b", re.I)
+_NEGATE = re.compile(
+    r"\b(?:no|not|never|none|cannot|can't|cant|don't|doesn't|isn't|aren't|won't|without|"
+    r"denied|refus\w*|revok\w*|withdr[ae]w\w*|declin\w*|forbid\w*|prohibit\w*|disallow\w*)\b", re.I)
+_HEDGE = re.compile(
+    r"\b(?:maybe|perhaps|probably|possibly|might|unsure|unless|if|whether|pending|depends?|"
+    r"check|ask|should|tbc|tbd|i\s+think|i\s+believe|i\s+guess|some\s+clients?|most\s+clients?|"
+    r"case[- ]by[- ]case|not\s+sure|partly|partially)\b|\?", re.I)
+CONFIRM_QUESTION = ("Please confirm explicitly: does ARFADA have its clients' permission to share "
+                    "previous evaluation reports as examples of previous work? (Yes / No)")
+
+
+def classify_confirmation(text: Optional[str]) -> str:
+    """AFFIRMATIVE / NEGATIVE / AMBIGUOUS for a governance confirmation statement."""
+    t = " ".join(str(text or "").split())
+    if not t:
+        return AMBIGUOUS
+    t = _NO_OBJECTION.sub(" approved ", t)
+    if _NEGATE.search(t):
+        return NEGATIVE
+    if _HEDGE.search(t):
+        return AMBIGUOUS
+    return AFFIRMATIVE if _AFFIRM.search(t) else AMBIGUOUS
 # an explicit report-level restriction overrides any general policy
 RESTRICTION = re.compile(
     r"\bstrictly\s+confidential\b|\bconfidential\s+(?:report|document|draft|-\s*not)|"
@@ -60,19 +85,32 @@ def _load() -> dict:
 
 
 def is_explicit_approval(note: Optional[str]) -> bool:
-    return bool(note and _APPROVAL.search(note) and not _HEDGE.search(note))
+    return classify_confirmation(note) == AFFIRMATIVE
 
 
-def set_previous_work_sharing_policy(note: str, *, scope: str = SCOPE) -> dict:
-    """Record the organisation-level approval — explicit confirmation wording only."""
-    if not is_explicit_approval(note):
-        return {"ok": False, "status": "NOT_EXPLICIT_APPROVAL",
-                "message": "The policy needs an explicit confirmation, e.g. 'ARFADA has "
-                           "permission from its clients to share previous evaluation reports "
-                           "as examples of previous work'."}
+def set_previous_work_sharing_policy(note: str, *, scope: str = SCOPE,
+                                     confirmed: bool = False) -> dict:
+    """Record the organisation-level approval from an explicit confirmation state.
+
+    AFFIRMATIVE wording is accepted as stated; AMBIGUOUS wording needs the explicit Yes/No
+    confirmation (``confirmed=True``); NEGATIVE wording is never recorded as approval. The
+    user's exact words are kept as provenance.
+    """
+    cls = classify_confirmation(note)
+    if cls == NEGATIVE:
+        return {"ok": False, "status": "NOT_APPROVED", "classification": cls,
+                "message": "The statement does not approve sharing; nothing was recorded."}
+    if cls == AMBIGUOUS and not confirmed:
+        return {"ok": False, "status": "NEEDS_CONFIRMATION", "classification": cls,
+                "question": CONFIRM_QUESTION,
+                "message": "The statement is not clearly affirmative; ask the explicit "
+                           "confirmation question (arfada_policy.py … --confirm yes)."}
     doc = _load()
     doc[PREVIOUS_WORK_SHARING] = {
         "status": APPROVED, "scope": scope, "source": "explicit user/admin confirmation",
+        "confirmation_state": ("EXPLICITLY_CONFIRMED" if confirmed and cls == AMBIGUOUS
+                               else "AFFIRMATIVE_STATEMENT"),
+        "classification": cls,
         "confirmation": note.strip()[:400],
         "recorded_at": _dt.datetime.now(_dt.timezone.utc).isoformat()}
     _store().write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")

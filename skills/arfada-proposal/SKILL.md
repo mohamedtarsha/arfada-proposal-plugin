@@ -84,9 +84,20 @@ proposal_draft_v2.docx → … → Final QA → proposal_final.docx
      available"): `run_decision.py <run_dir> team-availability --note "<their words>"`
      (one decision for all selected experts; availability is never assumed).
    - Organisation-level previous-work sharing (stored once, ARFADA-wide):
-     `arfada_policy.py set previous-work-sharing --note "<their explicit confirmation>"`.
+     `arfada_policy.py set previous-work-sharing --note "<their exact words>"`. v0.6.17: the
+     statement is classified by meaning (no magic phrase) — clearly affirmative wording is
+     recorded as stated; ambiguous wording returns NEEDS_CONFIRMATION with a Yes/No question
+     (record the answer with `--confirm yes`); a negative statement is never recorded.
      It clears an in-scope ARFADA evaluation report; a report-level restriction
      (confidential / do not share …) always overrides it and such a file is never packaged.
+   - Relevant experience (v0.6.17): `fast_proposal.py setup` selects the 3–5 closest Master
+     Tracker assignments automatically (`relevant_experience.json`, tracker provenance; the
+     current assignment excluded; no location the tracker does not record). Present them as
+     `claim_policy.relevant_experience` says — they are past assignments, separate from the
+     previous-work report file. A question appears only for a genuine tie / too few matches;
+     override with `run_decision.py <run_dir> relevant-experience "<id>,<id>,<id>"`.
+   - TEST_REPLAY runs report `SUBMISSION_PACKAGE_STATUS: NOT_ASSESSED_TEST_REPLAY` and list
+     unresolved items as live-submission gaps (only if submitted live), not blockers.
    `fast_proposal.py status` auto-packages what Knowledge already holds: the selected
    experts' original CVs from Staff CVs (identity-checked, `cv_package_manifest.json`) and
    a single current registration certificate from Company (`registration_provenance.json`).

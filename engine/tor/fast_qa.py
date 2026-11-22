@@ -26,6 +26,7 @@ TECH_NEEDS_FIXES = "NEEDS_FIXES"
 TECH_BLOCKED = "BLOCKED"
 PKG_READY = "READY"
 PKG_NOT_READY = "NOT_READY"
+PKG_NOT_ASSESSED = "NOT_ASSESSED_TEST_REPLAY"       # v0.6.17: a replay is not a submission
 
 
 def two_status_report(run_dir: str | Path, *, extra_submission_gaps: list = None,
@@ -84,8 +85,13 @@ def two_status_report(run_dir: str | Path, *, extra_submission_gaps: list = None
     dl = (claim_state.get("claims") or {}).get("deadline") or {}
     if dl.get("warning"):
         run_notes.append(f"WARNING — {dl.get('detail', '')}")
+    # v0.6.17: a replay has no submission package to assess — unresolved live items are
+    # reported as hypothetical live-submission gaps, never as final-submission blockers
+    live_gaps = []
     if purpose == "TEST_REPLAY":
-        package = PKG_NOT_READY
+        package = PKG_NOT_ASSESSED
+        live_gaps, final_blockers = final_blockers, []
+        buckets[FINAL_SUBMISSION_BLOCKER] = []
         run_notes.append("TEST_REPLAY — submission readiness is not assessed for a replay; do not "
                          "submit from this run.")
 
@@ -106,7 +112,8 @@ def two_status_report(run_dir: str | Path, *, extra_submission_gaps: list = None
     except Exception:
         pass
     gaps_md = render_internal_gaps(buckets, extra_notes=extra_notes, coverage=coverage,
-                                   run_notes=run_notes)
+                                   run_notes=run_notes, live_gaps=live_gaps,
+                                   test_replay=purpose == "TEST_REPLAY")
 
     return {
         "run_id": qa.get("run_id"),
@@ -117,6 +124,9 @@ def two_status_report(run_dir: str | Path, *, extra_submission_gaps: list = None
         "draft_blockers": draft_blockers,
         "final_submission_blockers": final_blockers,
         "canonical_blockers": [b["blocker"] for b in final_blockers],
+        # v0.6.17 TEST_REPLAY only: what WOULD block a live submission (not blockers here)
+        "live_submission_gaps_if_applicable": [b["blocker"] for b in live_gaps],
+        "live_submission_gap_details": live_gaps,
         "claim_state": {k: v.get("status") for k, v in
                         (claim_state.get("claims") or {}).items()},
         "warnings": warnings,
