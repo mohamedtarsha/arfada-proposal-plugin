@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
+import unicodedata
 from pathlib import Path
 from typing import Optional
 
@@ -139,14 +141,68 @@ def publish_portable_index(cache, knowledge_root: str | Path, *,
         return {"published": False, "reason": str(e)}
 
 
-def cv_file_for(profile: dict, knowledge_root: Optional[str | Path] = None) -> Optional[Path]:
-    """Path of a profile's raw CV under the Knowledge folder, if reachable."""
-    rel = profile.get("source_rel_path")
-    root = knowledge_root or _knowledge_root()
-    if not rel or not root:
+def portable_rel_parts(stored: str) -> Optional[list]:
+    """Path segments of a stored CV path, portable across Windows / Linux / synced folders.
+
+    v0.6.17: the index may hold Windows separators (``Sudan\\Expert\\cv.pdf``), POSIX
+    separators, or an absolute machine-specific path. Both separators are accepted; an
+    absolute path is re-anchored at its ``Staff CVs`` segment (Knowledge-root-relative);
+    traversal (``..``) and drive / root anchors that cannot be re-anchored are refused.
+    The stored value itself is never rewritten (it stays as provenance).
+    """
+    raw = str(stored or "").strip()
+    if not raw:
         return None
-    p = Path(root) / STAFF_SUB / rel
-    return p if p.exists() else None
+    parts = [p for p in re.split(r"[\\/]+", raw) if p not in ("", ".")]
+    low = [p.casefold() for p in parts]
+    if STAFF_SUB.casefold() in low:                      # absolute / machine path → re-anchor
+        parts = parts[len(low) - 1 - low[::-1].index(STAFF_SUB.casefold()) + 1:]
+    elif re.match(r"^(?:[A-Za-z]:|[\\/]{1,2})", raw):    # absolute path outside Staff CVs
+        return None
+    if not parts or any(p == ".." or re.match(r"^[A-Za-z]:$", p) for p in parts):
+        return None
+    return parts
+
+
+def _match_segment(directory: Path, name: str) -> Optional[Path]:
+    """The child of ``directory`` named ``name`` — tolerant of case / Unicode form only."""
+    exact = directory / name
+    if exact.exists():
+        return exact
+    want = unicodedata.normalize("NFC", name).casefold()
+    try:
+        for child in directory.iterdir():
+            if unicodedata.normalize("NFC", child.name).casefold() == want:
+                return child
+    except OSError:
+        return None
+    return None
+
+
+def cv_file_for(profile: dict, knowledge_root: Optional[str | Path] = None) -> Optional[Path]:
+    """Path of a profile's raw CV under the Knowledge folder, if reachable.
+
+    Resolves the stored path portably (see ``portable_rel_parts``) against the CURRENT
+    ``<Knowledge>/Staff CVs`` root and never returns a path outside that root.
+    """
+    root = knowledge_root or _knowledge_root()
+    if not root:
+        return None
+    parts = portable_rel_parts(profile.get("source_rel_path") or "")
+    if not parts:
+        return None
+    base = Path(root) / STAFF_SUB
+    cur = base
+    for seg in parts:
+        nxt = _match_segment(cur, seg)
+        if nxt is None:
+            return None
+        cur = nxt
+    try:
+        cur.resolve().relative_to(base.resolve())          # never outside the allowed root
+    except (ValueError, OSError):
+        return None
+    return cur if cur.is_file() else None
 
 
 def shortlist_details(profiles: list, *, knowledge_root: Optional[str | Path] = None,

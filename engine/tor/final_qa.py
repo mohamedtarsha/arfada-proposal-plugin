@@ -168,6 +168,7 @@ def run_final_qa(run_dir: str | Path, *, plugin_version: Optional[str] = None) -
     findings += _check_requirement_evidence(ctx)
     findings += _check_source_semantics(ctx)
     findings += _check_qualification_wording(ctx)
+    findings += _check_relevant_experience(ctx)
 
     # dedup
     seen, uniq = set(), []
@@ -1423,6 +1424,51 @@ def _check_semantic_consistency(ctx) -> list[Finding]:
                                f"Local field roster claimed but roster evidence is "
                                f"{issue.status}", evidence=issue.sentence[:160], section_id=sid,
                                recommended_action=f"Use: {issue.replacement}"))
+    return out
+
+
+def _check_relevant_experience(ctx) -> list[Finding]:
+    """v0.6.17: relevant experience is never left as a hidden placeholder.
+
+    Unresolved selection (tie / too few tracker matches) or a placeholder with no selection
+    → WARNING (internal_gaps). A placeholder with a resolved selection → INFO (the export
+    replaces it with the tracker-backed table). A resolved selection the proposal never
+    presents → WARNING."""
+    from .relevant_experience import load, resolved, is_placeholder, presented
+    out = []
+    doc = load(ctx["run_dir"])
+    holders = [(sid, b) for sid, c in ctx["gen_sections"].items()
+               for b in c.get("blocks", []) if is_placeholder(b)]
+    if doc and not resolved(doc):
+        why = ("a genuine tie at the cut-off — choose the assignments"
+               if doc.get("status") == "NEEDS_DECISION" else
+               "fewer than 3 Master Tracker assignments match this TOR")
+        out.append(Finding("RELEVANT_EXPERIENCE", WARNING, "selection_unresolved",
+                           f"Relevant-experience selection unresolved: {why}",
+                           evidence="; ".join(c.get("project_id", "") for c in doc.get("candidates", [])[:6]),
+                           section_id=holders[0][0] if holders else "", blocks_client=False,
+                           recommended_action="run_decision.py <run_dir> relevant-experience "
+                                              "\"<id>,<id>,<id>\" (3–5 tracker assignments)."))
+    elif holders and not doc:
+        out.append(Finding("RELEVANT_EXPERIENCE", WARNING, "placeholder_unresolved",
+                           "Relevant-experience placeholder left in the proposal and no tracker "
+                           "selection exists", evidence=str(holders[0][1].get("text", ""))[:160],
+                           section_id=holders[0][0], blocks_client=False,
+                           recommended_action="Run fast_proposal.py setup to rank the Master "
+                                              "Tracker, then regenerate the section."))
+    elif holders:
+        out.append(Finding("RELEVANT_EXPERIENCE", INFO, "placeholder_filled_at_export",
+                           f"Relevant-experience placeholder will be replaced at export by the "
+                           f"{len(doc['selected'])} selected Master Tracker assignments",
+                           section_id=holders[0][0], blocks_client=False,
+                           recommended_action="Regenerate the section to write the table directly."))
+    elif doc and presented(ctx["gen_sections"], doc) < 3:
+        out.append(Finding("RELEVANT_EXPERIENCE", WARNING, "selection_not_presented",
+                           "The selected relevant-experience assignments are not presented in the "
+                           "proposal", evidence="; ".join(c.get("project_id", "") for c in doc["selected"]),
+                           blocks_client=False,
+                           recommended_action="Add the relevant-experience table (claim_policy."
+                                              "relevant_experience) to the owning section."))
     return out
 
 

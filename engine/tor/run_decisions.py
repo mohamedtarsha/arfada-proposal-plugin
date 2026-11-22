@@ -128,6 +128,9 @@ def record(run_dir, key: str, value: str, *, note: str = "") -> dict:
                                       "note": note[:300], "recorded_at": _now()}
     elif key == "team_availability":
         return confirm_team_availability(run_dir, note or str(value or ""))
+    elif key == "relevant_experience":
+        from .relevant_experience import override
+        return override(run_dir, str(value or "").split(","), note=note)
     else:
         return {"ok": False, "status": "UNKNOWN_KEY", "message": f"Unknown decision '{key}'."}
     _save(run_dir, doc)

@@ -385,6 +385,7 @@ def build_claim_state(run_dir: str | Path, *, knowledge=None,
             "claims": claims, "team": team_claims,
             "requirement_evidence": req_evidence,
             "run_purpose": (decisions.get("run_purpose") or {}).get("value", ""),
+            "relevant_experience": _relevant_experience(run_dir),
             "places": places,
             "population_figures": population,
             "sampling_provenance": _sampling_provenance(run_dir),
@@ -392,6 +393,40 @@ def build_claim_state(run_dir: str | Path, *, knowledge=None,
             # v0.6.12: duration wording exactly as the TOR writes it
             "tor_durations": list(tor.get("duration_mentions") or []),
             "safe_wording": SAFE_WORDING}
+
+
+def _relevant_experience_policy(state: dict) -> dict:
+    rx = state.get("relevant_experience") or {}
+    if not rx:
+        return {}
+    from .relevant_experience import TABLE_COLUMNS, resolved
+    if resolved(rx):
+        return {"status": rx["status"], "table_columns": TABLE_COLUMNS,
+                "assignments": [{k: c.get(k) for k in ("project_id", "project_name", "client",
+                                                         "country", "year", "relevance")}
+                                for c in rx["selected"]],
+                "notes": rx.get("notes", []),
+                "instruction": ("In the section that answers the TOR's relevant-experience "
+                                "requirement, present exactly these Master Tracker assignments as a "
+                                "table with table_columns (cite project_id in the ledger summary). "
+                                "They are past assignments, separate from the previous-work report "
+                                "offered as a sample. Never add other projects or a location the "
+                                "tracker does not record.")}
+    return {"status": rx.get("status"), "assignments": [], "notes": rx.get("notes", []),
+            "instruction": ("Relevant-experience selection is unresolved: insert a "
+                            "NEEDS_ARFADA_EVIDENCE placeholder for it (it is reported in "
+                            "internal_gaps.md); never invent projects.")}
+
+
+def _relevant_experience(run_dir: Path) -> dict:
+    """v0.6.17: the selected Master Tracker assignments (separate from the work sample)."""
+    try:
+        from .relevant_experience import load
+        doc = load(run_dir) or {}
+    except Exception:
+        doc = {}
+    return {"status": doc.get("status", ""), "selected": doc.get("selected", []),
+            "notes": doc.get("notes", []), "question": doc.get("question")} if doc else {}
 
 
 def _qualification_rendering(state: dict) -> dict:
@@ -463,6 +498,8 @@ def generation_policy(state: dict) -> dict:
             if (state.get("population_figures") or {}).get("figures") else "",
             # v0.6.15: client-facing qualification claims follow the evidence status
             "qualification_rendering": _qualification_rendering(state),
+            # v0.6.17: relevant experience = tracker assignments, NOT the previous-work file
+            "relevant_experience": _relevant_experience_policy(state),
             "sampling_rule": ("Non-response inflation: required initial sample = n / (1 - r) "
                               "(225 / 0.90 = 250), never n x (1 + r); round up; keep the "
                               "baseline sample as a separate reference value."),

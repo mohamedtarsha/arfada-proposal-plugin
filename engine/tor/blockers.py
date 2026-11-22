@@ -114,7 +114,8 @@ def render_coverage(coverage: dict) -> list:
 
 
 def render_internal_gaps(buckets: dict, *, extra_notes: list = None,
-                         coverage: dict = None, run_notes: list = None) -> str:
+                         coverage: dict = None, run_notes: list = None,
+                         live_gaps: list = None, test_replay: bool = False) -> str:
     """Render internal_gaps.md — short, actionable, team-only (never client-facing)."""
     lines = ["# Internal gaps — NOT for the client draft", ""]
     if run_notes:                                   # v0.6.16: run purpose / replay warnings
@@ -130,13 +131,23 @@ def render_internal_gaps(buckets: dict, *, extra_notes: list = None,
         lines.append("## Draft blockers (fix to produce a working draft)")
         lines += [_bullet(i) for i in draft_b]
         lines.append("")
-    lines.append("## Final-submission blockers (resolve before submitting)")
-    if final_b or extra_notes:
-        lines += [_bullet(i) for i in final_b]
-        lines += [_bullet(n) for n in (extra_notes or [])]
+    if test_replay:
+        # v0.6.17: a replay has no final submission — these are hypothetical gaps only
+        lines.append("## Live-submission gaps (only if this TOR were submitted live)")
+        if live_gaps or extra_notes:
+            lines += [_bullet(i) for i in (live_gaps or [])]
+            lines += [_bullet(n) for n in (extra_notes or [])]
+        else:
+            lines.append("- None recorded")
+        lines.append("")
     else:
-        lines.append("- None recorded")
-    lines.append("")
+        lines.append("## Final-submission blockers (resolve before submitting)")
+        if final_b or extra_notes:
+            lines += [_bullet(i) for i in final_b]
+            lines += [_bullet(n) for n in (extra_notes or [])]
+        else:
+            lines.append("- None recorded")
+        lines.append("")
     if warns:
         lines.append("## Warnings (review)")
         lines += [_bullet(i) for i in warns]

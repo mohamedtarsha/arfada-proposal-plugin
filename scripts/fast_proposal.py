@@ -98,6 +98,22 @@ def cmd_setup(args) -> int:
     except Exception:
         pass
 
+    # v0.6.17: relevant experience — the 3–5 closest Master Tracker assignments are selected
+    # automatically (tracker provenance); a question only for a genuine tie / too few
+    try:
+        from engine.tor import relevant_experience as _rx
+        if knowledge is not None and not ((_rx.load(run_dir) or {}).get("status") == _rx.USER_SELECTED):
+            rx = _rx.write(run_dir, _rx.select(knowledge._project_pool(), tor, requirements))
+            result["proposed_setup"]["relevant_experience"] = [
+                {k: c.get(k) for k in ("project_id", "project_name", "client", "country", "year",
+                                       "score", "relevance")} for c in rx.get("selected", [])]
+            result["proposed_setup"]["relevant_experience_status"] = rx.get("status")
+            if rx.get("question") and len(result["questions"]) < 5:
+                result["questions"].append(rx["question"])
+                result["question_count"] = len(result["questions"])
+    except Exception:
+        pass
+
     # persist provisional decisions into the register (init if needed)
     from engine.tor.register import (init_register, load_register, save_register,
                                      provisional_recommend)

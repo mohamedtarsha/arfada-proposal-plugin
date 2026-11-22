@@ -319,16 +319,19 @@ class TestFastQuestions(unittest.TestCase):
 
 class TestStatusReport(_PolicyStore):
     def test_test_replay_warning_not_blocker(self):
-        from engine.tor.fast_qa import two_status_report, PKG_NOT_READY
+        from engine.tor.fast_qa import two_status_report, PKG_NOT_ASSESSED
         d = _run()
         RD.record(d, "run_purpose", "TEST_REPLAY")
         RD.confirm_team_availability(d, "All selected experts are available")
         rep = two_status_report(d)
-        self.assertNotIn("DEADLINE_CONFIRMATION", rep["canonical_blockers"])
-        self.assertNotIn("TEAM_AVAILABILITY", rep["canonical_blockers"])
-        self.assertIn("FINANCIAL_PROPOSAL", rep["canonical_blockers"])          # rule unchanged
-        self.assertIn("SUBMISSION_CHANNEL", rep["canonical_blockers"])
-        self.assertEqual(rep["submission_package_status"], PKG_NOT_READY)
+        # v0.6.17: a replay reports hypothetical live-submission gaps, not blockers
+        self.assertEqual(rep["canonical_blockers"], [])
+        gaps = rep["live_submission_gaps_if_applicable"]
+        self.assertNotIn("DEADLINE_CONFIRMATION", gaps)
+        self.assertNotIn("TEAM_AVAILABILITY", gaps)
+        self.assertIn("FINANCIAL_PROPOSAL", gaps)                                # rule unchanged
+        self.assertIn("SUBMISSION_CHANNEL", gaps)
+        self.assertEqual(rep["submission_package_status"], PKG_NOT_ASSESSED)
         self.assertIn("Run purpose", rep["internal_gaps_md"])
         self.assertIn("has passed", rep["internal_gaps_md"])
         live = _run()

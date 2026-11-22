@@ -122,13 +122,20 @@ def package_team_cvs(run_dir, *, knowledge=None, knowledge_root=None) -> dict:
         ident = canonical_identity(p, staff_facts=facts if isinstance(facts, list) else [])
         e = {"staff_profile_id": sid, "canonical_name": ident.get("canonical_name") or m.get("name", ""),
              "role": m.get("role", ""), "source_cv_path": "", "packaged_cv_path": "",
+             "stored_rel_path": p.get("source_rel_path", ""),     # provenance, as indexed
              "status": "UNRESOLVED", "reason": ""}
-        src = cv_file_for(p, root) if p.get("source_rel_path") else None
+        # v0.6.17: portable resolution (either separator, re-anchored at Staff CVs, never
+        # outside the Knowledge root) — the persisted index is never edited
+        from .lknowledge.staff_pool import portable_rel_parts
+        parts = portable_rel_parts(p.get("source_rel_path") or "")
+        src = cv_file_for(p, root) if parts else None
         if not p.get("source_rel_path"):
             e["reason"] = "the CV could not be resolved from the staff index"
+        elif not parts:
+            e["reason"] = "the stored CV path is outside the Knowledge Staff CVs root"
         elif src is None or not Path(src).is_file():
             e["reason"] = "source CV file unavailable under Staff CVs"
-            e["source_cv_path"] = str(Path(str(root or "")) / "Staff CVs" / p.get("source_rel_path", ""))
+            e["source_cv_path"] = str(Path(str(root or "")).joinpath("Staff CVs", *parts))
         elif Path(src).suffix.lower() not in PACKAGEABLE:
             e["source_cv_path"], e["reason"] = str(src), f"format {Path(src).suffix} cannot be packaged"
         else:
