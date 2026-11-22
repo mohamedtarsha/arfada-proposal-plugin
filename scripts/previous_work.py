@@ -92,10 +92,16 @@ def cmd_register(args) -> int:
               "message": "File is not an acceptable previous-work deliverable or does not exist."}, 4)
 
     from engine.tor.previous_work_state import record_selection, record_clearance
-    dest_dir = run_dir / "annexes" / "previous_work"
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / src.name
-    shutil.copyfile(src, dest)
+    # v0.6.16: a report with an explicit sharing restriction is selected but never packaged
+    from engine.tor.governance import report_restriction
+    verdict["restriction"] = report_restriction(src)
+    if verdict["restriction"]:
+        dest = src
+    else:
+        dest_dir = run_dir / "annexes" / "previous_work"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / src.name
+        shutil.copyfile(src, dest)
     record = record_selection(run_dir, file=dest, original=src, verdict=verdict)
     clearance = None
     if note:
@@ -106,7 +112,9 @@ def cmd_register(args) -> int:
                                 "--clearance-note with the user's explicit permission words."}
     from engine.tor.previous_work_state import previous_work_states
     st = previous_work_states(run_dir)
-    _out({"status": "REGISTERED", "annex": f"annexes/previous_work/{src.name}",
+    _out({"status": "REGISTERED_RESTRICTED" if verdict["restriction"] else "REGISTERED",
+          "annex": "" if verdict["restriction"] else f"annexes/previous_work/{src.name}",
+          "restriction": verdict["restriction"],
           "record": "previous_work.json", "by_arfada": verdict["by_arfada"],
           "previous_work_selected": st["selected"]["status"],
           "previous_work_clearance": st["clearance"]["status"],

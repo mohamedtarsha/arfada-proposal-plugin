@@ -69,6 +69,28 @@ proposal_draft_v2.docx → … → Final QA → proposal_final.docx
 3. **Ask AT MOST 5 questions** — only those in `fast_questions.json` (budget ceiling,
    strategic methodology, sensitive previous-work sharing, ambiguous assignment type,
    a mandatory unknown fact). Present them together, not one card per small item.
+   **v0.6.16 decisions** (each counts toward the 5; record only the employee's explicit
+   answer — never infer):
+   - `run_purpose` (asked when the TOR deadline has passed): "Is this a live submission or
+     a test/replay of an older TOR?" → `run_decision.py <run_dir> run-purpose
+     <LIVE_SUBMISSION|TEST_REPLAY>`. TEST_REPLAY records the original deadline with a
+     warning (no extension implied, never presented as submission-ready); LIVE_SUBMISSION
+     keeps an expired deadline as a blocker until a written extension is confirmed.
+   - `submission_channel` (TOR placeholder / no channel): "Please enter the submission email
+     or platform specified/confirmed for this opportunity." → `run_decision.py <run_dir>
+     submission-channel "<e-mail | platform | URL | Not known yet>"`. Never invent one.
+   - `registration_choice` when several registration documents exist in Knowledge/Company.
+   - Team availability, when the user confirms it for everyone ("All selected experts are
+     available"): `run_decision.py <run_dir> team-availability --note "<their words>"`
+     (one decision for all selected experts; availability is never assumed).
+   - Organisation-level previous-work sharing (stored once, ARFADA-wide):
+     `arfada_policy.py set previous-work-sharing --note "<their explicit confirmation>"`.
+     It clears an in-scope ARFADA evaluation report; a report-level restriction
+     (confidential / do not share …) always overrides it and such a file is never packaged.
+   `fast_proposal.py status` auto-packages what Knowledge already holds: the selected
+   experts' original CVs from Staff CVs (identity-checked, `cv_package_manifest.json`) and
+   a single current registration certificate from Company (`registration_provenance.json`).
+   The budget rule is unchanged: without approved rates the financial proposal stays a blocker.
 4. **Show the compact Proposed Setup** (from `proposed_setup.json`) — one screen. Tell
    the user they can edit any item later; do NOT require per-item approval.
 5. **Generate sections** with the provisional setup, then render the first output:

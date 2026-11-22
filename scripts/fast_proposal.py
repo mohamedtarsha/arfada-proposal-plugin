@@ -66,7 +66,19 @@ def cmd_setup(args) -> int:
     except Exception:
         knowledge = None
 
-    result = autopilot.autopilot(tor, requirements, candidates, knowledge)
+    # v0.6.16: recorded run decisions, the organisation sharing policy and any registration
+    # documents in Knowledge shape which questions are still needed
+    from engine.tor import run_decisions as _rd
+    from engine.tor.governance import previous_work_sharing_policy
+    from engine.tor.package_builder import registration_candidates
+    try:
+        reg_cands = registration_candidates()
+    except Exception:
+        reg_cands = []
+    result = autopilot.autopilot(tor, requirements, candidates, knowledge,
+                                 decisions=_rd.load(run_dir),
+                                 registration_candidates=reg_cands,
+                                 previous_work_policy=previous_work_sharing_policy() is not None)
 
     # Writing DNA (mandatory writing layer) — persisted across sessions, auto-loaded.
     dna_summary = {"writing_dna_active": False, "historical_pairs": 0,
@@ -167,6 +179,15 @@ def cmd_status(args) -> int:
     from engine.tor.package import check_submission_package
     from engine.tor.submission import build_submission_checklist
 
+    # v0.6.16: package what ARFADA Knowledge already holds (selected experts' CVs, the
+    # registration certificate) before computing blockers
+    packaged = {}
+    try:
+        from engine.tor.package_builder import auto_package
+        packaged = auto_package(run_dir)
+    except Exception as exc:
+        packaged = {"error": str(exc)}
+
     extra = []
     reqs = (_read(run_dir, "requirements.json", {}) or {}).get("requirements", [])
     if reqs:
@@ -184,6 +205,9 @@ def cmd_status(args) -> int:
     report = two_status_report(run_dir, extra_submission_gaps=extra)
     (run_dir / "internal_gaps.md").write_text(report["internal_gaps_md"], encoding="utf-8")
     report["internal_gaps_file"] = "internal_gaps.md"
+    report["auto_packaged"] = {k: (v.get("status") if isinstance(v, dict) and "status" in v else
+                                   {"all_packaged": v.get("all_packaged")} if isinstance(v, dict) else v)
+                               for k, v in packaged.items()}
     _out(report)
     return 0
 
