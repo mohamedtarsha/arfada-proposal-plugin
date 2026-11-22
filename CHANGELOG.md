@@ -6,6 +6,49 @@ Format: [Semantic Versioning](https://semver.org) — MAJOR.MINOR.PATCH
 
 ---
 
+## [0.6.16] — 2026-11-22
+
+### Added — avoidable final-submission blockers resolved from Knowledge / explicit decisions
+- **Team availability (bulk):** one explicit user decision ("All selected experts are
+  available") records availability for every selected `staff_profile_id`
+  (`run_decision.py <run_dir> team-availability --note "…"`). Hedged wording is refused, and
+  availability is never assumed. A newly added expert is not covered.
+- **CV package auto-built from Staff CVs** (`engine/tor/package_builder.py`):
+  - each selected expert's original CV is resolved and checked against the canonical name;
+  - it is copied byte-for-byte into `annexes/cvs/`;
+  - `cv_package_manifest.json` links staff_profile_id, canonical name, source path and
+    packaged path.
+
+  TEAM_CV_PACKAGE remains only when a CV is unresolved, unavailable, mismatched or
+  unpackageable.
+- **Organisation-level previous-work sharing policy** (`arfada_policy.py`, stored once in
+  `ARFADA_HOME/governance/policies.json`). It clears in-scope ARFADA evaluation reports. An
+  explicit report-level restriction (confidential / do not share / internal use only …)
+  overrides it, and `previous_work.py register` never packages a restricted file.
+- **Submission channel question:** when the TOR leaves a placeholder, FAST asks for it. The
+  employee's value is recorded as USER_CONFIRMED; "Not known yet" keeps the blocker, and
+  placeholders are refused.
+- **RUN_PURPOSE** (asked when the TOR deadline has passed):
+  - TEST_REPLAY records the original deadline with a warning (no extension implied) and is
+    never presented as submission-ready;
+  - LIVE_SUBMISSION keeps the expired deadline as a blocker until a written extension is
+    confirmed.
+- **Registration auto-discovery** in `ARFADA Knowledge/Company`: one current certificate is
+  packaged with `registration_provenance.json`; with several, the employee chooses; with none,
+  the blocker stays.
+- `fast_proposal.py status` runs the auto-packaging. New CLIs: `run_decision.py`,
+  `arfada_policy.py`, `package_submission.py`.
+
+### Fixed
+- QA accepts a physical annex that the claim state verifies from the actual files, instead
+  of relying on the ledger label.
+- The deliverables check uses the computed response status (v0.6.14 model) instead of the
+  ledger label.
+
+### Unchanged
+- Budget rule (no approved rates → FINANCIAL_PROPOSAL stays a blocker), Writing DNA,
+  ranking, methodology, sampling, the FAST ≤5-question limit.
+
 ## [0.6.15] — 2026-11-22
 
 ### Fixed — confirmed fresh v0.6.14 South Darfur run
