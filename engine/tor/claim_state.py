@@ -346,12 +346,21 @@ def build_claim_state(run_dir: str | Path, *, knowledge=None,
             "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
             "claims": claims, "team": team_claims,
             "requirement_evidence": req_evidence,
+            "places": places,
             "population_figures": population,
             "sampling_provenance": _sampling_provenance(run_dir),
             "source_inconsistencies": inconsist,
             # v0.6.12: duration wording exactly as the TOR writes it
             "tor_durations": list(tor.get("duration_mentions") or []),
             "safe_wording": SAFE_WORDING}
+
+
+def _qualification_rendering(state: dict) -> dict:
+    try:
+        from .qualification_wording import rendering_policy
+        return rendering_policy(state)
+    except Exception:
+        return {}
 
 
 def write_claim_state(run_dir: str | Path, **kw) -> dict:
@@ -413,6 +422,8 @@ def generation_policy(state: dict) -> dict:
                 "Never call a TARGET figure 'registered'. A stratum allocation derived from a TOR "
                 "target composition is written as: " + SAFE_WORDING["target_allocation"])
             if (state.get("population_figures") or {}).get("figures") else "",
+            # v0.6.15: client-facing qualification claims follow the evidence status
+            "qualification_rendering": _qualification_rendering(state),
             "sampling_rule": ("Non-response inflation: required initial sample = n / (1 - r) "
                               "(225 / 0.90 = 250), never n x (1 + r); round up; keep the "
                               "baseline sample as a separate reference value."),

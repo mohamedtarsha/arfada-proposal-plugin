@@ -99,7 +99,7 @@ def scan_text(text: str) -> list:
             if val < 10 or 1900 <= val <= 2100:
                 continue
             s, e = m.start(gi), m.end(gi)
-            if re.search(r"%\s*$", text[max(0, s - 3):s]) or re.match(r"\s*%", text[e:e + 3]):
+            if re.search(r"%[ \t]*\Z", text[max(0, s - 3):s]) or re.match(r"[ \t]*%", text[e:e + 3]):
                 continue                                   # a percentage, not a count
             if (s, val) in found:
                 continue
@@ -124,13 +124,139 @@ def scan_text(text: str) -> list:
     return [found[k] for k in sorted(found)]
 
 
-def build_register(text: str, *, records: Optional[list] = None) -> dict:
+# ---------------------------------------------------------------------------
+# v0.6.15: table-column-aware semantics — a value in a recoverable TOR table inherits the
+# role of its actual column (Baseline → OBSERVED_BASELINE, Target → TARGET); nearby
+# target language never decides it
+# ---------------------------------------------------------------------------
+
+_COLUMN_ROLE = ((re.compile(r"\bbaseline\b", re.I), OBSERVED_BASELINE),
+                (re.compile(r"\btargets?\b", re.I), TARGET))
+# cues that come from position / nearby wording only — superseded by the table column
+_WEAK_CUES = {"TOR planning figure", "target wording", "indicator table (target column)",
+              "indicator table (baseline column)"}
+
+
+def _figure_spans(text: str):
+    """(value, label, start, end) household figures in a text (percentages skipped)."""
+    seen = set()
+    for rx, gi in ((_AFTER, 1), (_BEFORE, 2)):
+        for m in rx.finditer(text or ""):
+            g = m.group(gi)
+            val = _num(g)
+            s, e = m.start(gi), m.end(gi)
+            if val < 10 or 1900 <= val <= 2100 or (s, val) in seen:
+                continue
+            if re.search(r"%[ \t]*\Z", text[max(0, s - 3):s]) or re.match(r"[ \t]*%", text[e:e + 3]):
+                continue                    # a percentage on the same line, not a count
+            seen.add((s, val))
+            yield val, _label(m.group("unit")), s, e
+
+
+def _column_mentions(column_texts: dict) -> list:
+    out = []
+    for (role, header), text in column_texts.items():
+        for val, label, s, e in _figure_spans(text):
+            out.append({"value": val, "label": label, "semantics": role,
+                        "cue": f"TOR table: '{header}' column",
+                        "excerpt": " ".join(text[max(0, s - 60):e + 40].split())[:180]})
+    return out
+
+
+def pdf_table_mentions(pdf_path) -> list:
+    """Figures in PDF tables whose header names a Baseline and a Target column.
+
+    pypdf's layout extraction keeps the horizontal position of every text run, so the
+    column a value sits in is recoverable: a run belongs to the column whose span it lies
+    in; a line with a run crossing a column boundary is prose and ends the table.
+    """
+    try:
+        from pypdf import PdfReader
+        pages = [p.extract_text(extraction_mode="layout") or "" for p in PdfReader(str(pdf_path)).pages]
+    except Exception:
+        return []
+    cols, streams, out = None, {}, []
+
+    def flush():
+        nonlocal cols, streams
+        if cols:
+            out.extend(_column_mentions({k: "\n".join(v) for k, v in streams.items()}))
+        cols, streams = None, {}
+
+    for line in "\n".join(pages).splitlines():
+        heads = [(m.start(), role, m.group(0)) for rx, role in _COLUMN_ROLE for m in rx.finditer(line)]
+        if len(heads) == 2 and len(line.split()) <= 8 and heads[0][1] != heads[1][1]:
+            flush()
+            heads.sort()
+            cols = heads                                   # [(start, role, header)…]
+            streams = {(role, h): [] for _s, role, h in heads}
+            continue
+        if not cols or not line.strip():
+            continue
+        bounds = [s - 4 for s, _r, _h in cols]             # column spans start a little left
+        runs = [(m.start(), m.end()) for m in re.finditer(r"\S+(?: \S+)*", line)]
+        spans = [(0, bounds[0])] + [(bounds[i], bounds[i + 1] if i + 1 < len(bounds) else 10 ** 6)
+                                    for i in range(len(bounds))]
+        placed = []
+        for a, b in runs:
+            idx = next((i for i, (lo, hi) in enumerate(spans) if lo <= a and b <= hi + 2), None)
+            if idx is None:
+                placed = None
+                break
+            placed.append((idx, line[a:b]))
+        if placed is None:                                 # a run crosses a column: prose
+            flush()
+            continue
+        for idx, txt in placed:
+            if idx >= 1:
+                _s, role, h = cols[idx - 1]
+                streams[(role, h)].append(txt)
+    flush()
+    return out
+
+
+def cell_table_mentions(tables: list) -> list:
+    """Figures in structured tables ([{rows: [[cell, …], …]}]) with Baseline / Target headers."""
+    out = []
+    for t in tables or []:
+        rows = t.get("rows") or []
+        if not rows:
+            continue
+        header = [str(c or "") for c in rows[0]]
+        roles = {}
+        for ci, h in enumerate(header):
+            for rx, role in _COLUMN_ROLE:
+                if rx.search(h) and not (rx.pattern.endswith("targets?\\b") and
+                                         re.search(r"\bbaseline\b", h, re.I)):
+                    roles[ci] = (role, h.strip())
+                    break
+        if not ({r for r, _h in roles.values()} >= {OBSERVED_BASELINE, TARGET}):
+            continue
+        texts = {}
+        for row in rows[1:]:
+            for ci, (role, h) in roles.items():
+                if ci < len(row):
+                    texts.setdefault((role, h), []).append(str(row[ci] or ""))
+        out.extend(_column_mentions({k: "\n".join(v) for k, v in texts.items()}))
+    return out
+
+
+def build_register(text: str, *, records: Optional[list] = None,
+                   table_mentions: Optional[list] = None) -> dict:
     by_val: dict = {}
+    in_table = {m["value"] for m in table_mentions or []}
     for mnt in scan_text(text):
+        if mnt["value"] in in_table and mnt["cue"] in _WEAK_CUES:
+            continue                       # the recoverable table column decides (v0.6.15)
         f = by_val.setdefault(mnt["value"], {"value": mnt["value"], "labels": [], "mentions": []})
         if mnt["label"] not in f["labels"]:
             f["labels"].append(mnt["label"])
         f["mentions"].append({k: mnt[k] for k in ("semantics", "cue", "excerpt")})
+    for mnt in table_mentions or []:
+        f = by_val.setdefault(mnt["value"], {"value": mnt["value"], "labels": [], "mentions": []})
+        if mnt["label"] not in f["labels"]:
+            f["labels"].append(mnt["label"])
+        f["mentions"].insert(0, {k: mnt[k] for k in ("semantics", "cue", "excerpt")})
     for r in records or []:
         try:
             val = int(str(r.get("value")).replace(",", ""))
@@ -152,9 +278,10 @@ def build_register(text: str, *, records: Optional[list] = None) -> dict:
     return {"schema": "source_semantics/1", "figures": figures}
 
 
-def scan_blocks(blocks: list, *, records: Optional[list] = None) -> dict:
+def scan_blocks(blocks: list, *, records: Optional[list] = None,
+                table_mentions: Optional[list] = None) -> dict:
     text = "\n".join((b.get("plain_text") or "") for b in blocks or [])
-    return build_register(text, records=records)
+    return build_register(text, records=records, table_mentions=table_mentions)
 
 
 def _load(p: Path):

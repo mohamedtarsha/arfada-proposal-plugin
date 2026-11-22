@@ -167,6 +167,7 @@ def run_final_qa(run_dir: str | Path, *, plugin_version: Optional[str] = None) -
     # v0.6.13 evidence-aware compliance + source semantics
     findings += _check_requirement_evidence(ctx)
     findings += _check_source_semantics(ctx)
+    findings += _check_qualification_wording(ctx)
 
     # dedup
     seen, uniq = set(), []
@@ -1414,6 +1415,36 @@ def _check_semantic_consistency(ctx) -> list[Finding]:
                                f"Local field roster claimed but roster evidence is "
                                f"{issue.status}", evidence=issue.sentence[:160], section_id=sid,
                                recommended_action=f"Use: {issue.replacement}"))
+    return out
+
+
+def _check_qualification_wording(ctx) -> list[Finding]:
+    """v0.6.15: client-facing qualification claims never stronger than EVIDENCE_STATUS.
+
+    Rewritable overclaims (blanket "met by the team collectively", a "how the team covers
+    it" column, a methodological commitment shown as team coverage) are warnings — the
+    final-language sanitizer rewrites them for export. A not-evidenced qualification
+    attributed to a named expert / role is a personnel-evidence error."""
+    from .qualification_wording import find_qualification_issues
+    out = []
+    state = _claim_state(ctx)
+    if not state.get("requirement_evidence"):
+        return out
+    for sid, cand in ctx["gen_sections"].items():
+        for it in find_qualification_issues(cand, state, section_id=sid):
+            if it["kind"] == "UNEVIDENCED_PERSONNEL_CLAIM":
+                out.append(Finding("PERSONNEL_EVIDENCE", ERROR, "unevidenced_qualification_claim",
+                                   it["detail"], evidence=it["sentence"][:160], section_id=sid,
+                                   recommended_action="State it as a methodological provision, or "
+                                                      "promote the CV evidence (staff fact)."))
+            else:
+                out.append(Finding("QUALIFICATION_CLAIM", WARNING, it["kind"].lower(),
+                                   f"Qualification claim stronger than the evidence: {it['detail']}",
+                                   evidence=it["sentence"][:160], section_id=sid,
+                                   blocks_client=False,
+                                   recommended_action=(f"Use: {it['replacement'][:160]}"
+                                                       if it.get("replacement") else
+                                                       "Remove internal labels from proposal text.")))
     return out
 
 

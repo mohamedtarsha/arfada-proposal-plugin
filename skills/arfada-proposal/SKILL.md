@@ -836,6 +836,17 @@ Rules you MUST follow when writing:
   cannot be edited into coverage. Weak evidence never makes a requirement "not
   addressed"; it shows as QUALIFICATION_READINESS PARTIAL / AT_RISK in internal_gaps.md
   and never blocks the technical draft. Never re-mark ledger entries to clear QA.
+- **Client claims follow the evidence (v0.6.15).** Write qualification text from
+  `claim_policy.qualification_rendering`: VERIFIED → the team may be said to meet it;
+  PARTIAL → state only the evidenced portion (named experts) and present the rest as a
+  methodological provision; GAP → never say the team demonstrates or meets it — explain
+  only how the methodology complies (e.g. "The evaluation design will collect and analyse
+  sex-, age- and disability-disaggregated data…"), never as prior personnel experience.
+  No blanket "the qualification requirements can be met by the team collectively"; use
+  `intro_wording`. Never write internal labels (GAP, AT_RISK, PARTIAL) in the proposal.
+  The export sanitizer rewrites what slips through and QA reports it (`QUALIFICATION_CLAIM`).
+- **TOR table columns (v0.6.15).** A figure in a recoverable TOR table takes the role of
+  its column (Baseline → OBSERVED_BASELINE, Target → TARGET), not of nearby wording.
 - **Non-response inflation (v0.6.13).** Required initial sample = n / (1 − r), never
   n × (1 + r): with a 225 minimum and 10% non-response, 225 / 0.90 = 250. State the
   minimum, the rate, the division and the rounded-up proposed sample; keep the

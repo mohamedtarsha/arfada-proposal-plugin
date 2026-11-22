@@ -333,6 +333,14 @@ def sanitize_candidate(candidate: dict, state: dict, *, section_id: str = "",
         from .source_semantics import sanitize_population
         cand, pop_changes = sanitize_population(cand, register, section_id=section_id)
         changes += pop_changes
+    # v0.6.15: client-facing qualification claims never stronger than the evidence status
+    if (state or {}).get("requirement_evidence"):
+        from .qualification_wording import sanitize_qualifications
+        cand, q_changes, q_residual = sanitize_qualifications(cand, state, section_id=section_id)
+        changes += q_changes
+        residual += [{"kind": i["kind"], "claim": "qualification_evidence", "status": "",
+                      "sentence": i["sentence"], "section_id": section_id, "rewritable": False,
+                      "replacement": "", "detail": i["detail"], "match": ""} for i in q_residual]
     # de-dup residual
     seen, res = set(), []
     for r in residual:
